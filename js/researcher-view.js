@@ -1,5 +1,5 @@
 /**
- * VisGate - Researcher View Logic
+ * VisGait - Researcher View Logic
  */
 
 const RESEARCHER_DATA_PATH = "data/dashboard_data.csv";
