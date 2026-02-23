@@ -105,7 +105,7 @@ function updateSummaryHeader(data) {
     const color = scoreColorScale(score);
     d3.select("#week-display").text(`Week ${data.week}`);
     d3.select("#score-val-big").text(score.toFixed(1)).style("color", color);
-    d3.select("#health-bar").transition().duration(600).style("width", `${score}%`).style("background-color", color);
+    d3.select("#health-bar").style("width", `${score}%`).style("background-color", color);
 }
 
 /**
