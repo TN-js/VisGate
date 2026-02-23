@@ -323,24 +323,30 @@ function renderRadarCharts(isEnlarged = false) {
         return { axis: act, value: entry ? entry.composite_score : 0 };
     });
 
+    // helper to compute metric values and draw metric radar for a given activity
+    function drawMetricRadarFor(activity) {
+        const actWeekData = activityDataSets[activity]?.find(d => d.week === selectedWeek);
+        const metricValues = (ACTIVITY_METRICS[activity] || []).map(k => {
+            const axisRaw = k.replace(/_norm|_pct/g, '').replace(/_/g, ' ').trim();
+            const axis = axisRaw.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+            const value = (function(){
+                const raw = actWeekData ? actWeekData[k] : 0;
+                const n = Number(raw);
+                return (isFinite(n) ? n : 0) * 100;
+            })();
+            return { axis, value };
+        });
+        drawRadar(targetMet, [{ values: metricValues }], null, size);
+    }
+
+    // draw activity breakdown radar; clicking an axis/point will only update the metric radar
     drawRadar(targetAct, [{ values: activityScores }], (d) => {
         selectedActivity = d.axis;
-        renderRadarCharts(isEnlarged);
+        drawMetricRadarFor(selectedActivity);
     }, size);
 
-    const actWeekData = activityDataSets[selectedActivity]?.find(d => d.week === selectedWeek);
-    const metricValues = (ACTIVITY_METRICS[selectedActivity] || []).map(k => {
-        const axisRaw = k.replace(/_norm|_pct/g, '').replace(/_/g, ' ').trim();
-        const axis = axisRaw.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-        const value = (function(){
-            const raw = actWeekData ? actWeekData[k] : 0;
-            const n = Number(raw);
-            return (isFinite(n) ? n : 0) * 100;
-        })();
-        return { axis, value };
-    });
-
-    drawRadar(targetMet, [{ values: metricValues }], null, size);
+    // initial draw of metric radar for the currently selected activity
+    drawMetricRadarFor(selectedActivity);
 }
 
 function drawRadar(containerId, data, onClick, size) {
@@ -367,41 +373,67 @@ function drawRadar(containerId, data, onClick, size) {
         .text(d => d.axis).style("font-size", "13px").style("cursor", onClick ? "pointer" : "default")
         .on("click", onClick ? (e, d) => onClick({axis: d.axis}) : null);
 
-    // Polygon
+    // Polygon with enter transition
     const radarLine = d3.lineRadial().radius(d => rScale(d.value)).angle((d, i) => i * angleSlice).curve(d3.curveLinearClosed);
     // choose color: if axes map to activities use their color, otherwise use selectedActivity color
     const polygonColor = (data[0].values.every(v => ACTIVITY_COLORS[v.axis])) ? (ACTIVITY_COLORS[data[0].values[0].axis] || '#3b82f6') : (ACTIVITY_COLORS[selectedActivity] || '#3b82f6');
-    svg.append("path").datum(data[0].values).attr("d", radarLine).attr("fill", polygonColor).attr("fill-opacity", 0.25).attr("stroke", polygonColor).attr("stroke-width", 2);
 
-    // Points (drawn per-vertex) with tooltip and activity-color mapping
+    // Start polygon at zero radius and tween to final values for a smooth animation
+    const finalVals = data[0].values.map(v => ({ axis: v.axis, value: v.value }));
+    const startVals = finalVals.map(v => ({ axis: v.axis, value: 0 }));
+    const poly = svg.append("path").datum(startVals)
+        .attr("d", radarLine)
+        .attr("fill", polygonColor).attr("fill-opacity", 0.25).attr("stroke", polygonColor).attr("stroke-width", 2);
+
+    poly.transition().duration(800).attrTween('d', function(d) {
+        const a = d.map(v => ({ axis: v.axis, value: v.value }));
+        const b = finalVals;
+        return function(t) {
+            const inter = a.map((v, i) => ({ axis: v.axis, value: v.value * (1 - t) + b[i].value * t }));
+            return radarLine(inter);
+        };
+    }).on('end', () => { poly.datum(finalVals); });
+
+    // Points (drawn per-vertex) with tooltip and activity-color mapping; animate from center out
     try {
         // ensure tooltip has sensible inline styles if stylesheet is missing
         tooltip.style("position", "absolute").style("pointer-events", "none").style("background", "#ffffff").style("color", "#0f172a").style("padding", "6px 8px").style("border", "1px solid #e2e8f0").style("border-radius", "6px").style("font-size", "12px").style("min-width","36px");
 
-        svg.selectAll('.radar-point').data(data[0].values).enter().append('circle')
+        const points = svg.selectAll('.radar-point').data(finalVals);
+
+        // enter
+        const enterPts = points.enter().append('circle')
             .attr('class', 'radar-point')
+            .attr('r', 0)
+            .attr('cx', 0)
+            .attr('cy', 0)
+            .attr('fill', (d) => ACTIVITY_COLORS[d.axis] || polygonColor)
+            .style('cursor', onClick ? 'pointer' : 'default');
+
+        // transition to final positions
+        enterPts.transition().duration(800).attr('r', 5)
+            .attr('cx', (d, i) => rScale(d.value) * Math.cos(angleSlice * i - Math.PI/2))
+            .attr('cy', (d, i) => rScale(d.value) * Math.sin(angleSlice * i - Math.PI/2));
+
+        // update existing points (if any) to new positions
+        points.transition().duration(800)
             .attr('r', 5)
-            .attr('cx', (d, i) => rScale(d.value) * Math.cos(angleSlice*i - Math.PI/2))
-            .attr('cy', (d, i) => rScale(d.value) * Math.sin(angleSlice*i - Math.PI/2))
-            .attr('fill', (d) => {
-                if (ACTIVITY_COLORS[d.axis]) return ACTIVITY_COLORS[d.axis];
-                return polygonColor;
-            })
-            .style('cursor', onClick ? 'pointer' : 'default')
+            .attr('cx', (d, i) => rScale(d.value) * Math.cos(angleSlice * i - Math.PI/2))
+            .attr('cy', (d, i) => rScale(d.value) * Math.sin(angleSlice * i - Math.PI/2))
+            .attr('fill', (d) => ACTIVITY_COLORS[d.axis] || polygonColor);
+
+        // attach tooltip handlers on merged selection
+        svg.selectAll('.radar-point')
             .on('mouseover', (e, d) => {
-                // show full activity name if available (e.g., SC -> Stair Climbing)
                 const code = d && d.axis ? d.axis : 'Value';
                 const label = ACTIVITY_NAMES[code] || code;
                 const val = d && isFinite(d.value) ? Math.round(d.value) : 0;
                 tooltip.style('opacity', 1).html('<strong>' + label + '</strong><br/>' + val + '%')
                     .style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
             })
-            .on('mousemove', (e) => {
-                tooltip.style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
-            })
-            .on('mouseout', () => {
-                tooltip.style('opacity', 0);
-            });
+            .on('mousemove', (e) => { tooltip.style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px'); })
+            .on('mouseout', () => { tooltip.style('opacity', 0); });
+
         // allow clicking points to trigger the same onClick as axis labels (switch activity)
         if (onClick) {
             svg.selectAll('.radar-point').on('click', (e, d) => { try { onClick({ axis: d.axis }); } catch (err) { /* ignore */ } });
