@@ -7,7 +7,18 @@
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-    <div id="header-placeholder"></div>
+    <div class="header">
+        <div class="title">
+            <img class="header-logo" src="images/VisGate-logo.png" alt="VisGate logo">
+        </div>
+        <div class="tab-switcher">
+            <button id="tab-button-patient" class="tab-button">Patient</button>
+            <button id="tab-button-researcher" class="tab-button">Researcher</button>
+        </div>
+        <div class="header-actions">
+            <button class="btn-about" id="btn-about">About</button>
+        </div>
+    </div>
 
     <main class="patient-content">
         <section class="viz-box">
@@ -22,13 +33,10 @@
         </section>
     </main>
 
-<<<<<<< HEAD
-    <script type="module" src="js/about-view.js"></script>
-=======
 <main class="researcher-content">
     <div class="researcher-box">
         <div class="parallel-coord-plot" id="parallel-coord-plot"></div>
-        <div class="line-plot-with-std" id="line-plot-with-std"></div>
+        <div class="line-plot-with-std" id="line-plot-with-std">line-plot-with-std</div>
         <div class="scatter-plot-matrix" id="scatter-plot-matrix">scatter-plot-matrix</div>
         <div class="violin-plot" id="violin-plot"></div>
     </div>
@@ -59,6 +67,5 @@
     </div>
 </div>
     <script src="js/scripts.js?v0.0.3"></script>
->>>>>>> 083486b (Implemented linechart on reasearcher page)
 </body>
 </html>
