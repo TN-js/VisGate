@@ -2,14 +2,15 @@
  * VisGait - Researcher View Logic
  */
 
-const RESEARCHER_DATA_PATH = "data/dashboard_data.csv";
-let cachedDashboardRows = [];
-let filteredData = [];
+const RESEARCHER_DATA_PATH = "data/dashboard_data.csv"; // csv source file
+let cachedDashboardRows = []; // used to populate with all rows in 'dashboard_data.csv'
+let filteredData = []; // the filtered data from brushing in the parallel coordinates plot
 // Violin filter state
 let violinActivity = "All";
 let violinGroup = "All";
 // Default scatter matrix metric selection shown on first render
 let selectedScatterMetricKeys = ["composite_score", "GSI_pct", "step_time_cv_pct", "symmetry_ratio"];
+// Stores active brush ranges per axis
 const parallelAxisFilters = {};
 
 // For finetuning sizings of the plot layout
@@ -19,7 +20,7 @@ const PLOT_LAYOUT = {
     parallelAxisPadding: 0.08,
     parallelAxisTopLabelOffset: -12,
     parallelAxisBottomLabelOffset: 24,
-    parallelControlsHeightRatio: 0.14,
+    parallelControlsHeightRatio: 0.14, // height preserved for controls
     violinControlsHeightRatio: 0.14
 };
 
@@ -33,6 +34,7 @@ const METRIC_METADATA = {
     cycle_time_mean_sec: { name: "Cycle Time Mean", unit: "[s]" }
 };
 
+// Colors for improving, stable, or declining patients used in scatter plot matrix & violin plots
 const GROUP_COLORS = {
     improving: "#2ecc71",
     declining: "#e74c3c",
@@ -52,6 +54,7 @@ const SCATTER_METRICS = [
     { key: "step_time_mean_sec", name: "Step Time (s)" },
     { key: "total_steps", name: "Total Steps" }
 ];
+
 const PARALLEL_METRICS = SCATTER_METRICS.slice();
 
 const VIOLIN_METRICS = [
@@ -63,6 +66,7 @@ const VIOLIN_METRICS = [
     { key: "cycle_time_cv_pct_norm", name: "Cycle CV" }
 ];
 
+// loads the shared header
 async function loadSharedHeader() {
     try {
         const response = await fetch("header.html");
@@ -87,6 +91,8 @@ function applyPanelViewportSizing() {
     });
 }
 
+// Utility function for calculating consistent margins/dimensions for any chart panel
+// Returns: width, height, margin, plotWidth, plotHeight
 function getPlotFrame(panelId, reserveTopRatio = 0) {
     const el = document.getElementById(panelId);
     if (!el) return null;
@@ -111,6 +117,8 @@ function getPlotFrame(panelId, reserveTopRatio = 0) {
     return { width, height, margin, plotWidth, plotHeight };
 }
 
+// Checks if a session row falls within all active brush selections
+// Used to gray out non-selected lines and to filter downstream charts
 function rowPassesParallelFilters(row, dimensions) {
     for (const dimension of dimensions) {
         const range = parallelAxisFilters[dimension];
@@ -123,46 +131,108 @@ function rowPassesParallelFilters(row, dimensions) {
     return true;
 }
 
-function updateParallelFilterControls(activeFilterCount, filteredCount, totalCount) {
+// used as a Map key to deduplicate sessions
+function buildSessionKey(userId, week) {
+    return `${String(userId ?? "").trim()}::${Number(week)}`;
+}
+
+// Util. function to count unique sessions per patient
+function countUniqueSessions(rows) {
+    const sessions = new Set();
+    rows.forEach((row) => {
+        const week = Number(row.week);
+        if (!Number.isFinite(week)) return;
+        sessions.add(buildSessionKey(row.user_id, week));
+    });
+    return sessions.size;
+}
+
+// combines raw CSV rows into session objects
+function buildParallelSessionData(rows) {
+    const bySession = new Map();
+    rows.forEach((row) => {
+        const week = Number(row.week);
+        if (!Number.isFinite(week)) return;
+
+        const sessionKey = buildSessionKey(row.user_id, week);
+        if (!bySession.has(sessionKey)) {
+            bySession.set(sessionKey, {
+                sessionKey,
+                user_id: row.user_id,
+                week,
+                rows: []
+            });
+        }
+        bySession.get(sessionKey).rows.push(row);
+    });
+
+    return Array.from(bySession.values());
+}
+
+function updateParallelFilterControls(
+    activeFilterCount,
+    filteredCount,
+    totalCount,
+    filteredSessionCount,
+    totalSessionCount
+) {
     const controlsEl = document.getElementById("parallel-filter-controls");
     if (!controlsEl) return;
 
     const statusEl = controlsEl.querySelector(".parallel-filter-status");
     if (statusEl) {
         if (activeFilterCount > 0) {
-            statusEl.textContent = `${filteredCount}/${totalCount} rows in filter`; 
+            statusEl.textContent = `${filteredSessionCount}/${totalSessionCount} sessions (${filteredCount}/${totalCount} rows)`; 
         } else {
-            statusEl.textContent = `No active filters (${totalCount} rows)`;
+            statusEl.textContent = `No active filters (${totalSessionCount} sessions, ${totalCount} rows)`;
         }
     }
 
 }
 
-async function syncFilteredDatasetFromParallel(weekData, dimensions) {
+// Function which handles the syncing of the filtered data between all plot charts. It calls all other charts with filteredData
+// 1. Counts how many filters are active
+// 2. If no filters -> filteredData = all rows (reset button has been clicked)
+// 3. If filters active -> find sessions passing all filters, then collect all raw rows belonging to those sessions
+// 4. Update the status text ("xx/yy sessions, xx/yy rows")
+// 5. Re-render the other 3 charts with the filtered data in parallel
+async function syncFilteredDatasetFromParallel(parallelRows, dimensions) {
     const activeFilterCount = Object.values(parallelAxisFilters).filter((range) => Array.isArray(range) && range.length === 2).length;
+    const totalSessionCount = countUniqueSessions(cachedDashboardRows);
+    let filteredSessionCount = totalSessionCount;
 
     if (!activeFilterCount) {
         filteredData = cachedDashboardRows.slice();
     } else {
-        if (Array.isArray(weekData) && weekData.length && weekData[0].__raw) {
-            filteredData = weekData
+        if (Array.isArray(parallelRows) && parallelRows.length && Array.isArray(parallelRows[0].__rawRows)) {
+            const includedSessions = parallelRows
                 .filter((row) => rowPassesParallelFilters(row, dimensions))
-                .map((row) => row.__raw);
+                .map((row) => row.__rawRows);
+
+            filteredSessionCount = includedSessions.length;
+            filteredData = includedSessions.flat();
         } else {
-            const includedWeeks = new Set(
-                weekData
+            const includedSessions = new Set(
+                parallelRows
                     .filter((row) => rowPassesParallelFilters(row, dimensions))
-                    .map((row) => row.week)
+                    .map((row) => buildSessionKey(row.user_id, row.week))
             );
 
+            filteredSessionCount = includedSessions.size;
             filteredData = cachedDashboardRows.filter((row) => {
                 const week = Number(row.week);
-                return Number.isFinite(week) && includedWeeks.has(week);
+                return Number.isFinite(week) && includedSessions.has(buildSessionKey(row.user_id, week));
             });
         }
     }
 
-    updateParallelFilterControls(activeFilterCount, filteredData.length, cachedDashboardRows.length);
+    updateParallelFilterControls(
+        activeFilterCount,
+        filteredData.length,
+        cachedDashboardRows.length,
+        filteredSessionCount,
+        totalSessionCount
+    );
     await Promise.all([
         renderLinePlotWithStd(filteredData),
         renderScatterPlotMatrix(filteredData),
@@ -170,6 +240,7 @@ async function syncFilteredDatasetFromParallel(weekData, dimensions) {
     ]);
 }
 
+// Parallell coords plot function. Averages the different metric data per session.
 async function renderParallelCoordinatesPlot(rows) {
     if (!window.d3) {
         console.error("D3 did not load. The parallel coordinates plot cannot render.");
@@ -204,11 +275,23 @@ async function renderParallelCoordinatesPlot(rows) {
         return acc;
     }, {});
 
-    const data = rows
-        .map((row, index) => {
-            const next = { __raw: row, __index: index };
+    const sessionRows = buildParallelSessionData(rows);
+    // Aggregate the rows of each session to get the mean metric per session
+    const data = sessionRows
+        .map((session, index) => {
+            const next = {
+                __rawRows: session.rows,
+                __sessionKey: session.sessionKey,
+                __index: index,
+                user_id: session.user_id,
+                week: session.week
+            };
+
             PARALLEL_METRICS.forEach((metric) => {
-                next[metric.name] = Number(row[metric.key]);
+                const values = session.rows
+                    .map((row) => Number(row[metric.key]))
+                    .filter((value) => Number.isFinite(value));
+                next[metric.name] = values.length ? d3.mean(values) : NaN;
             });
             return next;
         })
@@ -217,7 +300,13 @@ async function renderParallelCoordinatesPlot(rows) {
     if (!data.length) {
         container.append("div").attr("class", "parallel-empty").text("No numeric data for parallel coordinates.");
         filteredData = cachedDashboardRows.slice();
-        updateParallelFilterControls(0, filteredData.length, cachedDashboardRows.length);
+        updateParallelFilterControls(
+            0,
+            filteredData.length,
+            cachedDashboardRows.length,
+            countUniqueSessions(cachedDashboardRows),
+            countUniqueSessions(cachedDashboardRows)
+        );
         await Promise.all([
             renderLinePlotWithStd(filteredData),
             renderScatterPlotMatrix(filteredData),
@@ -258,6 +347,7 @@ async function renderParallelCoordinatesPlot(rows) {
     let isDragging = false;
     let dragStartX = 0;
     let dragStartScroll = 0;
+    // Makes the parallel coords plot dragable horizontally
     scrollWrap
         .on("mousedown", (event) => {
             if (event.target.closest(".pc-brush")) return;
@@ -281,6 +371,7 @@ async function renderParallelCoordinatesPlot(rows) {
     const chart = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
     const x = d3.scalePoint().domain(dimensions).range([0, plotWidth]).padding(PLOT_LAYOUT.parallelAxisPadding);
 
+    // One vertical scale per axis, linearly scaled, autofitted.
     const yByDimension = {};
     dimensions.forEach((dimension) => {
         const values = data.map((row) => row[dimension]).filter((value) => Number.isFinite(value));
