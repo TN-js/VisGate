@@ -13,8 +13,6 @@ let selectedScatterMetricKeys = ["composite_score", "GSI_pct", "step_time_cv_pct
 const parallelAxisFilters = {};
 
 const PLOT_LAYOUT = {
-    panelWidthVw: 44,
-    panelHeightVh: 36,
     marginRatio: { top: 0.07, right: 0.05, bottom: 0.11, left: 0.1 },
     parallelControlsHeightRatio: 0.14,
     violinControlsHeightRatio: 0.14
@@ -77,8 +75,8 @@ function getPlotFrame(panelId, reserveTopRatio = 0) {
     const el = document.getElementById(panelId);
     if (!el) return null;
 
-    const width = el.clientWidth || (window.innerWidth * PLOT_LAYOUT.panelWidthVw) / 100;
-    const totalHeight = el.clientHeight || (window.innerHeight * PLOT_LAYOUT.panelHeightVh) / 100;
+    const width = el.clientWidth || 320;
+    const totalHeight = el.clientHeight || 240;
     const height = totalHeight * (1 - reserveTopRatio);
     const margin = {
         top: height * PLOT_LAYOUT.marginRatio.top,
@@ -474,34 +472,62 @@ async function renderLinePlotWithStd(rows) {
         .attr("transform", `translate(0,${plotHeight})`)
         .call(d3.axisBottom(x));
 
+    const tooltip = d3.select("body")
+        .append("div")
+        .style("position", "absolute")
+        .style("opacity", 0);
+
     const color = d3.scaleOrdinal(d3.schemeCategory10);
+
     dimensions.forEach((dimension) => {
-        const line = d3
-            .line()
-            .x((d) => x(d.week))
-            .y((d) => y(d[dimension]));
+        const lineGroup = chart.append("g");
 
         const areaToShade = d3
             .area()
             .x((d) => x(d.week))
             .y0((d) => y(d[dimension] - d[`${dimension}-STD`]))
             .y1((d) => y(d[dimension] + d[`${dimension}-STD`]));
+        lineGroup
+            .append("path")
+            .datum(data)
+            .attr("fill", color(dimension))
+            .attr("opacity", 0.5)
+            .attr("d", areaToShade);
+    })
 
-        chart
+    dimensions.forEach((dimension) => {
+        const lineGroup = chart.append("g");
+        const line = d3
+            .line()
+            .x((d) => x(d.week))
+            .y((d) => y(d[dimension]));
+        
+        lineGroup
             .append("path")
             .datum(data)
             .attr("fill", "none")
             .attr("stroke", color(dimension))
             .attr("stroke-width", 1)
             .attr("d", line);
-
-        chart
-            .append("path")
-            .datum(data)
-            .attr("fill", color(dimension))
-            .attr("opacity", 0.5)
-            .attr("d", areaToShade);
+            
+        lineGroup.selectAll("circle").data(data).enter().append("circle")
+        .attr("cx", d => x(d.week)).attr("cy", d => y(d[dimension])).attr("r", 3)
+        .style('cursor','pointer')
+        .on('mouseover', (e, d) => {
+            // use dark tooltip style for line chart
+            tooltip.style('background', '#1e293b').style('color', '#ffffff').style('padding', '8px 10px').style('border', 'none').style('min-width','60px');
+            const wk = d && d.week ? d.week : '?';
+            const value = d[dimension];
+            const stdValue = d[`${dimension}-STD`];
+            tooltip.style('opacity', 1).html(`Week: ${wk}<br/>${dimension}: ${value}<br/>${dimension}-STD: ${stdValue}`)
+                .style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
+        })
+        .on('mousemove', (e) => {
+            tooltip.style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
+        })
+        .on('mouseout', () => { tooltip.style('opacity', 0); });
     });
+    chart.selectAll("circle").raise()
 }
 
 // Called on researcher load and checkbox changes:
