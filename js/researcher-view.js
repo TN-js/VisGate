@@ -2,21 +2,26 @@
  * VisGait - Researcher View Logic
  */
 
-const RESEARCHER_DATA_PATH = "data/dashboard_data.csv";
-let cachedDashboardRows = [];
-let filteredData = [];
+const RESEARCHER_DATA_PATH = "data/dashboard_data.csv"; // csv source file
+let cachedDashboardRows = []; // used to populate with all rows in 'dashboard_data.csv'
+let filteredData = []; // the filtered data from brushing in the parallel coordinates plot
 // Violin filter state
 let violinActivity = "All";
 let violinGroup = "All";
 // Default scatter matrix metric selection shown on first render
 let selectedScatterMetricKeys = ["composite_score", "GSI_pct", "step_time_cv_pct", "symmetry_ratio"];
+// Stores active brush ranges per axis
 const parallelAxisFilters = {};
+let parallelBrushHistory = []; // Tracks chronological order of brushed dimensions
 
+// For finetuning sizings of the plot layout
 const PLOT_LAYOUT = {
-    panelWidthVw: 44,
-    panelHeightVh: 36,
     marginRatio: { top: 0.07, right: 0.05, bottom: 0.11, left: 0.1 },
-    parallelControlsHeightRatio: 0.14,
+    parallelMarginRatio: { top: 0.1, right: 0.04, bottom: 0.16, left: 0.03 },
+    parallelAxisPadding: 0.08,
+    parallelAxisTopLabelOffset: -12,
+    parallelAxisBottomLabelOffset: 24,
+    parallelControlsHeightRatio: 0.14, // height preserved for controls
     violinControlsHeightRatio: 0.14
 };
 
@@ -30,6 +35,7 @@ const METRIC_METADATA = {
     cycle_time_mean_sec: { name: "Cycle Time Mean", unit: "[s]" }
 };
 
+// Colors for improving, stable, or declining patients used in scatter plot matrix & violin plots
 const GROUP_COLORS = {
     improving: "#2ecc71",
     declining: "#e74c3c",
@@ -49,7 +55,9 @@ const SCATTER_METRICS = [
     { key: "step_time_mean_sec", name: "Step Time (s)" },
     { key: "total_steps", name: "Total Steps" }
 ];
+
 const PARALLEL_METRICS = SCATTER_METRICS.slice();
+const PARALLEL_ACTIVITY_ORDER = ["SC", "STS", "TUG", "W"];
 
 const VIOLIN_METRICS = [
     { key: "GSI_pct_norm", name: "GSI" },
@@ -60,6 +68,7 @@ const VIOLIN_METRICS = [
     { key: "cycle_time_cv_pct_norm", name: "Cycle CV" }
 ];
 
+// loads the shared header
 async function loadSharedHeader() {
     try {
         const response = await fetch("header.html");
@@ -73,12 +82,30 @@ async function loadSharedHeader() {
     }
 }
 
+function applyPanelViewportSizing() {
+    const panelIds = ["parallel-coord-plot", "line-plot-with-std", "scatter-plot-matrix", "violin-plot"];
+    panelIds.forEach((panelId) => {
+        const el = document.getElementById(panelId);
+        if (!el) return;
+        // Keep panel sizing under CSS grid control so all quadrants stay aligned.
+        el.style.removeProperty("width");
+        el.style.removeProperty("height");
+    });
+}
+
+// Utility function for calculating consistent margins/dimensions for any chart panel
+// Returns: width, height, margin, plotWidth, plotHeight
 function getPlotFrame(panelId, reserveTopRatio = 0) {
     const el = document.getElementById(panelId);
     if (!el) return null;
 
-    const width = el.clientWidth || (window.innerWidth * PLOT_LAYOUT.panelWidthVw) / 100;
-    const totalHeight = el.clientHeight || (window.innerHeight * PLOT_LAYOUT.panelHeightVh) / 100;
+    const parentEl = el.parentElement;
+    const fallbackWidth = parentEl
+        ? Math.max(320, (parentEl.clientWidth - 8) / 2)
+        : Math.max(320, window.innerWidth * 0.45);
+    const fallbackHeight = Math.max(240, window.innerHeight * 0.36);
+    const width = el.clientWidth || fallbackWidth;
+    const totalHeight = el.clientHeight || fallbackHeight;
     const height = totalHeight * (1 - reserveTopRatio);
     const margin = {
         top: height * PLOT_LAYOUT.marginRatio.top,
@@ -92,6 +119,8 @@ function getPlotFrame(panelId, reserveTopRatio = 0) {
     return { width, height, margin, plotWidth, plotHeight };
 }
 
+// Checks if a plot row falls within all active brush selections
+// Used to gray out non-selected lines and to filter downstream charts
 function rowPassesParallelFilters(row, dimensions) {
     for (const dimension of dimensions) {
         const range = parallelAxisFilters[dimension];
@@ -104,6 +133,67 @@ function rowPassesParallelFilters(row, dimensions) {
     return true;
 }
 
+function hasMeaningfulParallelValue(value) {
+    return Number.isFinite(value) && value !== 0;
+}
+
+function buildParallelSessions(rows) {
+    const bySession = new Map();
+    rows.forEach((row) => {
+        const week = Number(row.week);
+        if (!Number.isFinite(week)) return;
+        const userId = String(row.user_id ?? "").trim();
+        const sessionKey = `${userId}::${week}`;
+        const activity = String(row.activity || "").trim().toUpperCase();
+
+        if (!bySession.has(sessionKey)) {
+            bySession.set(sessionKey, {
+                sessionKey,
+                user_id: userId,
+                week,
+                rows: [],
+                byActivity: new Map()
+            });
+        }
+
+        const session = bySession.get(sessionKey);
+        session.rows.push(row);
+        if (activity && !session.byActivity.has(activity)) {
+            session.byActivity.set(activity, row);
+        }
+    });
+    return Array.from(bySession.values());
+}
+
+// Build one axis per metric per activity, then omit axes that are only "", 0 or 0.0.
+function buildParallelDimensionDefs(rows) {
+    const activitiesInData = Array.from(
+        new Set(rows.map((row) => String(row.activity || "").trim().toUpperCase()).filter(Boolean))
+    );
+    const orderedActivities = PARALLEL_ACTIVITY_ORDER.filter((activity) => activitiesInData.includes(activity));
+    const extraActivities = activitiesInData
+        .filter((activity) => !PARALLEL_ACTIVITY_ORDER.includes(activity))
+        .sort();
+    const activityDomain = orderedActivities.concat(extraActivities);
+
+    // Activity-first ordering keeps each row's valid points adjacent,
+    // so paths form visible line segments instead of isolated single points.
+    return activityDomain.flatMap((activity) =>
+        PARALLEL_METRICS
+            .filter((metric) =>
+                rows.some((row) => {
+                    if (String(row.activity || "").trim().toUpperCase() !== activity) return false;
+                    return hasMeaningfulParallelValue(Number(row[metric.key]));
+                })
+            )
+            .map((metric) => ({
+                name: `${metric.name} (${activity})`,
+                key: metric.key,
+                activity
+            }))
+    );
+}
+
 function updateParallelFilterControls(activeFilterCount, filteredCount, totalCount) {
     const controlsEl = document.getElementById("parallel-filter-controls");
     if (!controlsEl) return;
@@ -111,36 +201,39 @@ function updateParallelFilterControls(activeFilterCount, filteredCount, totalCou
     const statusEl = controlsEl.querySelector(".parallel-filter-status");
     if (statusEl) {
         if (activeFilterCount > 0) {
-            statusEl.textContent = `${filteredCount}/${totalCount} rows in filter`; 
+            statusEl.textContent = `${filteredCount}/${totalCount} rows in filter`;
         } else {
             statusEl.textContent = `No active filters (${totalCount} rows)`;
         }
     }
 
+    const undoBtn = controlsEl.querySelector("#parallel-undo-filters");
+    if (undoBtn) {
+        undoBtn.disabled = parallelBrushHistory.length === 0;
+    }
 }
 
-async function syncFilteredDatasetFromParallel(weekData, dimensions) {
+// Function which handles the syncing of the filtered data between all plot charts. It calls all other charts with filteredData
+// 1. Counts how many filters are active
+// 2. If no filters -> filteredData = all rows (reset button has been clicked)
+// 3. If filters active -> keep rows passing all active axis filters
+// 4. Update the status text
+// 5. Re-render the other 3 charts with the filtered data in parallel
+async function syncFilteredDatasetFromParallel(parallelRows, dimensions) {
     const activeFilterCount = Object.values(parallelAxisFilters).filter((range) => Array.isArray(range) && range.length === 2).length;
 
     if (!activeFilterCount) {
         filteredData = cachedDashboardRows.slice();
+    } else if (Array.isArray(parallelRows) && parallelRows.length && Array.isArray(parallelRows[0].__rawRows)) {
+        filteredData = parallelRows
+            .filter((row) => rowPassesParallelFilters(row, dimensions))
+            .flatMap((row) => row.__rawRows);
+    } else if (Array.isArray(parallelRows) && parallelRows.length && parallelRows[0].__raw) {
+        filteredData = parallelRows
+            .filter((row) => rowPassesParallelFilters(row, dimensions))
+            .map((row) => row.__raw);
     } else {
-        if (Array.isArray(weekData) && weekData.length && weekData[0].__raw) {
-            filteredData = weekData
-                .filter((row) => rowPassesParallelFilters(row, dimensions))
-                .map((row) => row.__raw);
-        } else {
-            const includedWeeks = new Set(
-                weekData
-                    .filter((row) => rowPassesParallelFilters(row, dimensions))
-                    .map((row) => row.week)
-            );
-
-            filteredData = cachedDashboardRows.filter((row) => {
-                const week = Number(row.week);
-                return Number.isFinite(week) && includedWeeks.has(week);
-            });
-        }
+        filteredData = [];
     }
 
     updateParallelFilterControls(activeFilterCount, filteredData.length, cachedDashboardRows.length);
@@ -151,6 +244,7 @@ async function syncFilteredDatasetFromParallel(weekData, dimensions) {
     ]);
 }
 
+// Parallel coords plot function. Draws one line per patient-week session.
 async function renderParallelCoordinatesPlot(rows) {
     if (!window.d3) {
         console.error("D3 did not load. The parallel coordinates plot cannot render.");
@@ -159,6 +253,38 @@ async function renderParallelCoordinatesPlot(rows) {
 
     const container = d3.select("#parallel-coord-plot");
     container.selectAll("*").remove();
+
+    const hostEl = document.getElementById("parallel-coord-plot");
+    if (!hostEl) return;
+
+    const dimensionDefs = buildParallelDimensionDefs(rows);
+    const dimensions = dimensionDefs.map((def) => def.name);
+    const keyByDimension = dimensionDefs.reduce((acc, def) => {
+        acc[def.name] = def.key;
+        return acc;
+    }, {});
+
+    const sessions = buildParallelSessions(rows);
+    const data = sessions
+        .map((session, index) => {
+            const next = {
+                __rawRows: session.rows,
+                __index: index,
+                __sessionKey: session.sessionKey
+            };
+            dimensionDefs.forEach((def) => {
+                const sourceRow = session.byActivity.get(def.activity);
+                const value = sourceRow ? Number(sourceRow[def.key]) : NaN;
+                const isPresent = hasMeaningfulParallelValue(value);
+                next[def.name] = isPresent ? value : NaN;
+            });
+            return next;
+        })
+        .filter((row) => dimensions.filter((dimension) => Number.isFinite(row[dimension])).length >= 2);
+
+    let isRestoringBrush = false;
+    const brushesByDim = {};
+    let applyLineStyles = () => {};
 
     const controls = container
         .append("div")
@@ -170,30 +296,48 @@ async function renderParallelCoordinatesPlot(rows) {
         .attr("type", "button")
         .text("Reset filters")
         .on("click", async () => {
-            Object.keys(parallelAxisFilters).forEach((dimension) => delete parallelAxisFilters[dimension]);
-            await renderParallelCoordinatesPlot(cachedDashboardRows);
+            if (Object.keys(parallelAxisFilters).length === 0) return;
+
+            isRestoringBrush = true;
+            parallelBrushHistory = [];
+            Object.keys(parallelAxisFilters).forEach((dimension) => {
+                delete parallelAxisFilters[dimension];
+                if (brushesByDim[dimension]) {
+                    brushesByDim[dimension].group.call(brushesByDim[dimension].brush.move, null);
+                }
+            });
+            isRestoringBrush = false;
+
+            applyLineStyles();
+            await syncFilteredDatasetFromParallel(data, dimensions);
+        });
+
+    controls
+        .append("button")
+        .attr("type", "button")
+        .attr("id", "parallel-undo-filters")
+        .text("Undo")
+        .property("disabled", true)
+        .on("click", async () => {
+            while (parallelBrushHistory.length > 0) {
+                const lastDimension = parallelBrushHistory.pop();
+                if (parallelAxisFilters[lastDimension]) {
+                    delete parallelAxisFilters[lastDimension];
+                    
+                    isRestoringBrush = true;
+                    if (brushesByDim[lastDimension]) {
+                        brushesByDim[lastDimension].group.call(brushesByDim[lastDimension].brush.move, null);
+                    }
+                    isRestoringBrush = false;
+
+                    applyLineStyles();
+                    await syncFilteredDatasetFromParallel(data, dimensions);
+                    return;
+                }
+            }
         });
 
     controls.append("div").attr("class", "parallel-filter-status");
-
-    const hostEl = document.getElementById("parallel-coord-plot");
-    if (!hostEl) return;
-
-    const dimensions = PARALLEL_METRICS.map((metric) => metric.name);
-    const keyByDimension = PARALLEL_METRICS.reduce((acc, metric) => {
-        acc[metric.name] = metric.key;
-        return acc;
-    }, {});
-
-    const data = rows
-        .map((row, index) => {
-            const next = { __raw: row, __index: index };
-            PARALLEL_METRICS.forEach((metric) => {
-                next[metric.name] = Number(row[metric.key]);
-            });
-            return next;
-        })
-        .filter((row) => dimensions.filter((dimension) => Number.isFinite(row[dimension])).length >= 2);
 
     if (!data.length) {
         container.append("div").attr("class", "parallel-empty").text("No numeric data for parallel coordinates.");
@@ -211,14 +355,15 @@ async function renderParallelCoordinatesPlot(rows) {
     const panelHeight = Math.max(240, hostEl.clientHeight || 0);
     const controlsHeight = panelHeight * PLOT_LAYOUT.parallelControlsHeightRatio;
     const viewportHeight = Math.max(160, panelHeight - controlsHeight - 18);
-    const axisSpacing = 140;
+    const axisSpacing = dimensions.length > 20 ? 185 : 160;
     const chartWidth = Math.max(panelWidth - 20, axisSpacing * (dimensions.length - 1) + 130);
     const chartHeight = viewportHeight;
+    const parallelMarginRatio = PLOT_LAYOUT.parallelMarginRatio;
     const margin = {
-        top: chartHeight * PLOT_LAYOUT.marginRatio.top,
-        right: chartWidth * PLOT_LAYOUT.marginRatio.right,
-        bottom: chartHeight * PLOT_LAYOUT.marginRatio.bottom,
-        left: chartWidth * PLOT_LAYOUT.marginRatio.left
+        top: chartHeight * parallelMarginRatio.top,
+        right: chartWidth * parallelMarginRatio.right,
+        bottom: chartHeight * parallelMarginRatio.bottom,
+        left: chartWidth * parallelMarginRatio.left
     };
     const plotWidth = chartWidth - margin.left - margin.right;
     const plotHeight = chartHeight - margin.top - margin.bottom;
@@ -238,6 +383,7 @@ async function renderParallelCoordinatesPlot(rows) {
     let isDragging = false;
     let dragStartX = 0;
     let dragStartScroll = 0;
+    // Makes the parallel coords plot dragable horizontally
     scrollWrap
         .on("mousedown", (event) => {
             if (event.target.closest(".pc-brush")) return;
@@ -259,8 +405,9 @@ async function renderParallelCoordinatesPlot(rows) {
         });
 
     const chart = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
-    const x = d3.scalePoint().domain(dimensions).range([0, plotWidth]).padding(0.2);
+    const x = d3.scalePoint().domain(dimensions).range([0, plotWidth]).padding(PLOT_LAYOUT.parallelAxisPadding);
 
+    // One vertical scale per axis, linearly scaled, autofitted.
     const yByDimension = {};
     dimensions.forEach((dimension) => {
         const values = data.map((row) => row[dimension]).filter((value) => Number.isFinite(value));
@@ -291,11 +438,11 @@ async function renderParallelCoordinatesPlot(rows) {
         .attr("fill", "none")
         .attr("d", (row) => line(dimensions.map((dimension) => [dimension, row[dimension]])));
 
-    const applyLineStyles = () => {
+    applyLineStyles = () => {
         lineSelection
-            .attr("stroke", (row) => (rowPassesParallelFilters(row, dimensions) ? "#2563eb" : "#9ca3af"))
+            .attr("stroke", (row) => (rowPassesParallelFilters(row, dimensions) ? "#2563eb" : "#d1d5db"))
             .attr("stroke-width", (row) => (rowPassesParallelFilters(row, dimensions) ? 1.2 : 1))
-            .attr("opacity", (row) => (rowPassesParallelFilters(row, dimensions) ? 0.5 : 0.1));
+            .attr("opacity", (row) => (rowPassesParallelFilters(row, dimensions) ? 0.45 : 0.08));
     };
 
     const axis = chart
@@ -311,7 +458,7 @@ async function renderParallelCoordinatesPlot(rows) {
 
     axis
         .append("text")
-        .attr("y", -8)
+        .attr("y", PLOT_LAYOUT.parallelAxisTopLabelOffset)
         .attr("text-anchor", "middle")
         .attr("fill", "#111")
         .style("font-size", "11px")
@@ -319,13 +466,12 @@ async function renderParallelCoordinatesPlot(rows) {
 
     axis
         .append("text")
-        .attr("y", plotHeight + 13)
+        .attr("y", plotHeight + PLOT_LAYOUT.parallelAxisBottomLabelOffset)
         .attr("text-anchor", "middle")
         .attr("fill", "#64748b")
-        .style("font-size", "10px")
+        .style("font-size", "11px")
         .text((dimension) => keyByDimension[dimension] || "");
 
-    let isRestoringBrush = false;
     axis.each(function(dimension) {
         const axisGroup = d3.select(this);
         const brush = d3
@@ -336,11 +482,16 @@ async function renderParallelCoordinatesPlot(rows) {
 
                 if (!event.selection) {
                     delete parallelAxisFilters[dimension];
+                    parallelBrushHistory = parallelBrushHistory.filter(d => d !== dimension);
                 } else {
                     const [top, bottom] = event.selection;
                     const max = yByDimension[dimension].invert(top);
                     const min = yByDimension[dimension].invert(bottom);
                     parallelAxisFilters[dimension] = [Math.min(min, max), Math.max(min, max)];
+                    
+                    // Always make the freshly tweaked brush the most recent action
+                    parallelBrushHistory = parallelBrushHistory.filter(d => d !== dimension);
+                    parallelBrushHistory.push(dimension);
                 }
 
                 applyLineStyles();
@@ -348,6 +499,8 @@ async function renderParallelCoordinatesPlot(rows) {
             });
 
         const brushGroup = axisGroup.append("g").attr("class", "pc-brush").call(brush);
+        brushesByDim[dimension] = { brush, group: brushGroup };
+
         const range = parallelAxisFilters[dimension];
         if (range) {
             isRestoringBrush = true;
@@ -445,10 +598,11 @@ async function renderLinePlotWithStd(rows) {
             "GIR-W-STD": row["GIR-W-STD"],
             "GIL-W-STD": row["GIL-W-STD"]
         }))
-        .filter((row) => dimensions.every((dimension) => Number.isFinite(row[dimension])))
+        .filter((row) => Number.isFinite(row.week))
         .sort((a, b) => a.week - b.week);
 
-    if (!data.length || !Number.isFinite(minWeek) || !Number.isFinite(maxWeek)) {
+    const weeks = data.map((row) => row.week).filter((week) => Number.isFinite(week));
+    if (!data.length || !weeks.length) {
         container.text("No line chart data available.");
         return;
     }
@@ -465,7 +619,7 @@ async function renderLinePlotWithStd(rows) {
     const y = d3.scaleLinear().range([plotHeight, 0]);
     const x = d3.scaleLinear().range([0, plotWidth]);
 
-    x.domain([minWeek, maxWeek]);
+    x.domain(d3.extent(weeks));
     y.domain([-5, 50]);
 
     chart.append("g").call(d3.axisLeft(y));
@@ -474,34 +628,64 @@ async function renderLinePlotWithStd(rows) {
         .attr("transform", `translate(0,${plotHeight})`)
         .call(d3.axisBottom(x));
 
+    const tooltip = d3.select("body")
+        .append("div")
+        .style("position", "absolute")
+        .style("opacity", 0);
+
     const color = d3.scaleOrdinal(d3.schemeCategory10);
+
     dimensions.forEach((dimension) => {
-        const line = d3
-            .line()
-            .x((d) => x(d.week))
-            .y((d) => y(d[dimension]));
+        const lineGroup = chart.append("g");
 
         const areaToShade = d3
             .area()
+            .defined((d) => Number.isFinite(d[dimension]) && Number.isFinite(d[`${dimension}-STD`]))
             .x((d) => x(d.week))
             .y0((d) => y(d[dimension] - d[`${dimension}-STD`]))
             .y1((d) => y(d[dimension] + d[`${dimension}-STD`]));
+        lineGroup
+            .append("path")
+            .datum(data)
+            .attr("fill", color(dimension))
+            .attr("opacity", 0.5)
+            .attr("d", areaToShade);
+    })
 
-        chart
+    dimensions.forEach((dimension) => {
+        const lineGroup = chart.append("g");
+        const line = d3
+            .line()
+            .defined((d) => Number.isFinite(d[dimension]))
+            .x((d) => x(d.week))
+            .y((d) => y(d[dimension]));
+        
+        lineGroup
             .append("path")
             .datum(data)
             .attr("fill", "none")
             .attr("stroke", color(dimension))
             .attr("stroke-width", 1)
             .attr("d", line);
-
-        chart
-            .append("path")
-            .datum(data)
-            .attr("fill", color(dimension))
-            .attr("opacity", 0.5)
-            .attr("d", areaToShade);
+            
+        lineGroup.selectAll("circle").data(data.filter((d) => Number.isFinite(d[dimension]))).enter().append("circle")
+        .attr("cx", d => x(d.week)).attr("cy", d => y(d[dimension])).attr("r", 3)
+        .style('cursor','pointer')
+        .on('mouseover', (e, d) => {
+            // use dark tooltip style for line chart
+            tooltip.style('background', '#1e293b').style('color', '#ffffff').style('padding', '8px 10px').style('border', 'none').style('min-width','60px');
+            const wk = d && d.week ? d.week : '?';
+            const value = d[dimension];
+            const stdValue = d[`${dimension}-STD`];
+            tooltip.style('opacity', 1).html(`Week: ${wk}<br/>${dimension}: ${value}<br/>${dimension}-STD: ${stdValue}`)
+                .style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
+        })
+        .on('mousemove', (e) => {
+            tooltip.style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
+        })
+        .on('mouseout', () => { tooltip.style('opacity', 0); });
     });
+    chart.selectAll("circle").raise()
 }
 
 // Called on researcher load and checkbox changes:
@@ -984,8 +1168,10 @@ function debounce(fn, waitMs) {
 
 async function init() {
     await loadSharedHeader();
+    applyPanelViewportSizing();
     await renderDashboard();
     window.addEventListener("resize", debounce(() => {
+        applyPanelViewportSizing();
         renderDashboard();
     }, 120));
 }

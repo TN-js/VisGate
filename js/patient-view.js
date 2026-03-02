@@ -312,7 +312,14 @@ function renderLineChart(data, target = "#line-chart", defaultW = 700, h = 300) 
         .append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
     const x = d3.scaleLinear().domain(d3.extent(data, d => d.week)).range([0, width]);
-    const y = d3.scaleLinear().domain([0, 100]).range([height, 0]);
+    // Dynamic vertical scale: compute min/max of the composite scores and add a small padding
+    const vals = data.map(d => +d.composite_score_overall).filter(v => isFinite(v));
+    let yMin = d3.min(vals);
+    let yMax = d3.max(vals);
+    if (!isFinite(yMin) || !isFinite(yMax)) { yMin = 0; yMax = 100; }
+    if (yMax === yMin) { yMin = yMin - 1; yMax = yMax + 1; }
+    const pad = (yMax - yMin) * 0.1; // 10% padding
+    const y = d3.scaleLinear().domain([yMin - pad, yMax + pad]).range([height, 0]).nice();
 
     svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x).ticks(Math.max(data.length, 4)));
     svg.append("g").call(d3.axisLeft(y));

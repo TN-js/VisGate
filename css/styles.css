@@ -398,11 +398,12 @@ body {
 
 .researcher-box {
     width: 100%;
-    min-height: 76vh;
+    height: clamp(620px, 76vh, 920px);
+    min-height: 0;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: repeat(2, minmax(0, 1fr));
-    gap: 16px;
+    gap: 6px;
     align-items: stretch;
 }
 
@@ -413,6 +414,9 @@ body {
     background: #ffffff;
     border: 1px solid #e2e8f0;
     border-radius: 12px;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
     min-height: 0;
     overflow: hidden;
     display: flex;
