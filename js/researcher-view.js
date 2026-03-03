@@ -14,6 +14,10 @@ let selectedScatterMetricKeys = ["composite_score", "GSI_pct", "step_time_cv_pct
 const parallelAxisFilters = {};
 let parallelBrushHistory = []; // Tracks chronological order of brushed dimensions
 
+// Scatter lasso selection state (only active in expanded/modal view)
+let scatterLassoSelectedIds = new Set(); // holds "userId::week::activity" keys
+let scatterLassoLocked = false;          // true while a lasso selection is active
+
 // For finetuning sizings of the plot layout
 const PLOT_LAYOUT = {
     marginRatio: { top: 0.07, right: 0.05, bottom: 0.11, left: 0.1 },
@@ -37,7 +41,7 @@ const METRIC_METADATA = {
 
 const METRIC_INFO = {
     composite_score: "Composite mobility score combining gait indicators into one summary metric.",
-    GSI_pct: "Gait Stability Index. Higher values generally indicate steadier gait.",
+    GSI_pct: "Gait Symmetry Index. Lower values indicate more symmetric (healthier) gait.",
     symmetry_ratio: "Left/right gait symmetry. Values near 1.0 indicate balanced gait.",
     step_time_cv_pct: "Step time variability (coefficient of variation). Lower is generally more stable.",
     cycle_time_cv_pct: "Gait cycle time variability. Lower values indicate more consistent timing.",
@@ -47,12 +51,18 @@ const METRIC_INFO = {
     step_time_mean_sec: "Average step time in seconds.",
     cycle_time_mean_sec: "Average gait cycle time in seconds.",
     total_steps: "Total step count for the session.",
-    GSI_pct_norm: "Normalized Gait Stability Index.",
+    GSI_pct_norm: "Normalized Gait Symmetry Index.",
     symmetry_ratio_norm: "Normalized gait symmetry metric.",
     gait_index_left_pct_norm: "Normalized left gait index.",
     gait_index_right_pct_norm: "Normalized right gait index.",
     step_time_cv_pct_norm: "Normalized step-time variability.",
-    cycle_time_cv_pct_norm: "Normalized cycle-time variability."
+    cycle_time_cv_pct_norm: "Normalized cycle-time variability.",
+    "GSI-TUG": "Gait Symmetry Index averaged across TUG (Timed Up and Go) trials.",
+    "GSI-W": "Gait Symmetry Index averaged across walking trials.",
+    "GIR-TUG": "Right gait index averaged across TUG trials.",
+    "GIL-TUG": "Left gait index averaged across TUG trials.",
+    "GIR-W": "Right gait index averaged across walking trials.",
+    "GIL-W": "Left gait index averaged across walking trials."
 };
 
 // Colors for improving, stable, or declining patients used in scatter plot matrix & violin plots
@@ -711,7 +721,9 @@ async function renderLinePlotWithStd(rows) {
     const svg = container
         .append("svg")
         .attr("viewBox", `0 0 ${width} ${height}`)
-        .attr("preserveAspectRatio", "xMidYMid meet");
+        .attr("preserveAspectRatio", "xMidYMid meet")
+        .style("width", "100%")
+        .style("height", "100%");
 
     const chart = svg
         .append("g")
@@ -768,6 +780,11 @@ async function renderLinePlotWithStd(rows) {
             });
         label.append("span").attr("class", "color-dot").style("background-color", color(metric));
         label.append("span").text(metric);
+        label
+            .style("cursor", "pointer")
+            .on("mouseover", (event) => showMetricInfoTooltip(event, metric))
+            .on("mousemove", (event) => moveMetricInfoTooltip(event))
+            .on("mouseout", () => hideMetricInfoTooltip());
     });
 
     updateLinePlotWithStdChart(dimensions, chart, data, x, y, yAxisGroup, tooltip, color, minValue, maxValue);
@@ -814,6 +831,7 @@ function updateLinePlotWithStdChart(dimensions, chart, data, x, y, yAxisGroup, t
             .attr("class", "std-area")
             .attr("fill", color(dimension))
             .attr("opacity", 0.5)
+            .style("pointer-events", "none")
             .attr("d", areaToShade);
     });
 
@@ -832,6 +850,7 @@ function updateLinePlotWithStdChart(dimensions, chart, data, x, y, yAxisGroup, t
             .attr("fill", "none")
             .attr("stroke", color(dimension))
             .attr("stroke-width", 1)
+            .style("pointer-events", "none")
             .attr("d", line);
 
         lineGroup
@@ -844,6 +863,7 @@ function updateLinePlotWithStdChart(dimensions, chart, data, x, y, yAxisGroup, t
             .attr("cy", (d) => y(d[dimension]))
             .attr("r", 3)
             .style("cursor", "pointer")
+            .style("pointer-events", "all")
             .on("mouseover", (event, d) => {
                 const wk = d && d.week ? d.week : "?";
                 const value = d[dimension];
@@ -947,7 +967,21 @@ async function renderScatterPlotMatrix(rows = []) {
                 redraw();
             });
         label.append("span").text(metric.name);
+        label
+            .style("cursor", "pointer")
+            .on("mouseover", (event) => showMetricInfoTooltip(event, metric.key, metric.name))
+            .on("mousemove", (event) => moveMetricInfoTooltip(event))
+            .on("mouseout", () => hideMetricInfoTooltip());
     });
+
+    // Lasso instruction hint (only shown when expanded)
+    controlsDiv.append("div")
+        .attr("class", "scatter-lasso-hint")
+        .html(
+            '<strong>Lasso tool</strong><br>' +
+            'Expand the plot, then click and drag a rectangle on any scatter cell to highlight points. ' +
+            'Click "Clear selection" to reset.'
+        );
 
     redraw();
 }
@@ -1133,6 +1167,33 @@ function kernelEpanechnikov(k) {
     };
 }
 
+// Generates a unique row key for lasso identification.
+function scatterRowKey(row) {
+    return `${row.user_id}::${row.week}::${row.activity}`;
+}
+
+// Apply lasso highlight styling to all scatter circles in the SVG.
+function applyScatterLassoStyles(svgEl) {
+    if (!svgEl) return;
+    const hasSelection = scatterLassoSelectedIds.size > 0;
+    d3.select(svgEl)
+        .selectAll("circle.sc-dot")
+        .attr("fill", (row) => {
+            if (!hasSelection) return GROUP_COLORS[String(row.user_group || "").toLowerCase()] || "#9ca3af";
+            return scatterLassoSelectedIds.has(scatterRowKey(row)) ? "#b026ff" : "#d1d5db";
+        })
+        .attr("fill-opacity", (row) => {
+            if (!hasSelection) return 0.5;
+            // Adjust the 0.35 value below to control how visible unselected dots are (0 = invisible, 1 = full).
+            return scatterLassoSelectedIds.has(scatterRowKey(row)) ? 0.9 : 0.35;
+        })
+        .attr("r", (row) => {
+            if (!hasSelection) return 3;
+            // Adjust selected (3.5) and unselected (1.8) radius here.
+            return scatterLassoSelectedIds.has(scatterRowKey(row)) ? 3.5 : 1.8;
+        });
+}
+
 // D3 renderer for scatter matrix SVG.
 // Receives parsed rows, active metrics, and the wrapper element to draw into.
 function drawScatterMatrixSvg(data, metrics, wrapEl) {
@@ -1141,6 +1202,9 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
 
     const n = metrics.length;
     if (n < 2) return;
+
+    // Detect whether we are inside the expanded modal.
+    const isExpanded = !!wrapEl.closest(".modal-plot-live");
 
     const totalWidth = Math.max(1, wrapEl.clientWidth);
     const totalHeight = Math.max(1, wrapEl.clientHeight);
@@ -1151,6 +1215,13 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
     const innerW = cellW - ip.left - ip.right;
     const innerH = cellH - ip.top - ip.bottom;
 
+    // Clear lasso state when redrawing (e.g. checkbox change)
+    scatterLassoSelectedIds.clear();
+    scatterLassoLocked = false;
+    // Remove clear-lasso button if it exists
+    const existingClearBtn = wrapEl.parentElement?.querySelector(".scatter-lasso-clear-btn");
+    if (existingClearBtn) existingClearBtn.remove();
+
     const svg = d3
         .select(wrapEl)
         .append("svg")
@@ -1160,6 +1231,9 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
         .style("height", "100%");
 
     const tooltip = ensureTooltip();
+
+    // Track all cell brushes so we can clear others when one fires.
+    const cellBrushes = [];
 
     metrics.forEach((rowMetric, rowIndex) => {
         metrics.forEach((colMetric, colIndex) => {
@@ -1215,12 +1289,14 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                     .data(valid)
                     .enter()
                     .append("circle")
+                    .attr("class", "sc-dot")
                     .attr("cx", (row) => xScale(row[colMetric.key]))
                     .attr("cy", (row) => yScale(row[rowMetric.key]))
-                    .attr("r", 2)
+                    .attr("r", 3)
                     .attr("fill", (row) => GROUP_COLORS[String(row.user_group || "").toLowerCase()] || "#9ca3af")
                     .attr("fill-opacity", 0.5)
                     .attr("stroke", "none")
+                    .style("pointer-events", "all")
                     .on("mouseover", (event, row) => {
                         tooltip
                             .style("display", "block")
@@ -1237,6 +1313,64 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                             .style("top", `${event.pageY - 28}px`);
                     })
                     .on("mouseout", () => tooltip.style("display", "none"));
+
+                // Add lasso brush in expanded mode only
+                if (isExpanded) {
+                    const brush = d3.brush()
+                        .extent([[0, 0], [innerW, innerH]])
+                        .on("start", function (event) {
+                            if (!event.sourceEvent) return; // programmatic call, skip
+                            if (scatterLassoLocked) {
+                                // A lasso is already active - cancel this new brush
+                                d3.select(this).call(brush.move, null);
+                                return;
+                            }
+                            // Clear brushes on all other cells
+                            cellBrushes.forEach(({ brushRef, groupRef, ri, ci }) => {
+                                if (ri !== rowIndex || ci !== colIndex) {
+                                    groupRef.call(brushRef.move, null);
+                                }
+                            });
+                        })
+                        .on("end", function (event) {
+                            if (!event.sourceEvent) return;
+                            if (scatterLassoLocked) return;
+                            if (!event.selection) {
+                                // Brush cleared (click on empty)
+                                scatterLassoSelectedIds.clear();
+                                scatterLassoLocked = false;
+                                applyScatterLassoStyles(svg.node());
+                                // Remove clear button
+                                const clearBtn = wrapEl.parentElement?.querySelector(".scatter-lasso-clear-btn");
+                                if (clearBtn) clearBtn.remove();
+                                return;
+                            }
+                            const [[x0, y0], [x1, y1]] = event.selection;
+                            // Find all points inside the rectangle
+                            scatterLassoSelectedIds.clear();
+                            valid.forEach((row) => {
+                                const cx = xScale(row[colMetric.key]);
+                                const cy = yScale(row[rowMetric.key]);
+                                if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) {
+                                    scatterLassoSelectedIds.add(scatterRowKey(row));
+                                }
+                            });
+
+                            if (scatterLassoSelectedIds.size > 0) {
+                                scatterLassoLocked = true;
+                                applyScatterLassoStyles(svg.node());
+                                // Show clear button
+                                showLassoClearButton(wrapEl, svg.node(), cellBrushes);
+                            } else {
+                                // Empty selection
+                                d3.select(this).call(brush.move, null);
+                                applyScatterLassoStyles(svg.node());
+                            }
+                        });
+
+                    const brushGroup = plotGroup.append("g").attr("class", "sc-lasso-brush").call(brush);
+                    cellBrushes.push({ brushRef: brush, groupRef: brushGroup, ri: rowIndex, ci: colIndex });
+                }
 
                 cellGroup
                     .append("text")
@@ -1269,6 +1403,32 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
             }
         });
     });
+}
+
+// Shows a "Clear selection" button above the scatter matrix when lasso is active.
+function showLassoClearButton(wrapEl, svgEl, cellBrushes) {
+    const parent = wrapEl.parentElement;
+    if (!parent) return;
+    // Remove existing button
+    const existing = parent.querySelector(".scatter-lasso-clear-btn");
+    if (existing) existing.remove();
+
+    const btn = document.createElement("button");
+    btn.className = "scatter-lasso-clear-btn";
+    btn.type = "button";
+    btn.textContent = "Clear selection (" + scatterLassoSelectedIds.size + " points)";
+    btn.addEventListener("click", () => {
+        scatterLassoSelectedIds.clear();
+        scatterLassoLocked = false;
+        // Clear all brushes visually
+        cellBrushes.forEach(({ brushRef, groupRef }) => {
+            groupRef.call(brushRef.move, null);
+        });
+        applyScatterLassoStyles(svgEl);
+        btn.remove();
+    });
+    // Insert before the svg wrapper
+    parent.insertBefore(btn, wrapEl);
 }
 
 // Pearson correlation coefficient. Returns 0 if not enough points or no variance.
@@ -1347,12 +1507,19 @@ window.addEventListener("openResearcherModal", (event) => {
     modalState.panel = panel;
     modalState.placeholder = placeholder;
     modalState.type = type;
+
+    // Re-render scatter inside the modal so the lasso brushes are created.
+    if (type === "scatter") {
+        const dataToUse = filteredData.length ? filteredData : cachedDashboardRows;
+        renderScatterPlotMatrix(dataToUse);
+    }
 });
 
 function closeResearcherModal() {
     const modal = document.getElementById("researcher-modal");
     const container = document.getElementById("researcher-modal-container");
     if (!modal || !container) return;
+    const wasScatter = modalState.type === "scatter";
     if (modalState.panel && modalState.placeholder && modalState.placeholder.parentNode) {
         modalState.placeholder.parentNode.insertBefore(modalState.panel, modalState.placeholder);
         modalState.panel.classList.remove("modal-plot-live");
@@ -1363,6 +1530,14 @@ function closeResearcherModal() {
     modalState.type = null;
     modal.style.display = "none";
     container.innerHTML = "";
+
+    // Re-render scatter back in normal size (removes lasso brushes).
+    if (wasScatter) {
+        scatterLassoSelectedIds.clear();
+        scatterLassoLocked = false;
+        const dataToUse = filteredData.length ? filteredData : cachedDashboardRows;
+        renderScatterPlotMatrix(dataToUse);
+    }
 }
 
 window.closeResearcherModal = closeResearcherModal;

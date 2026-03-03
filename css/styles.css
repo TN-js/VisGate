@@ -1,10 +1,10 @@
 /* --- General Layout & Typography --- */
 body {
-    height: auto;
-    overflow-y: auto;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    background-color: #f8fafc; /* Lighter, modern professional background */
-    margin: 0;
+        height: auto;
+        overflow-y: auto;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        background-color: #f8fafc; /* Lighter, modern professional background */
+        margin: 0;
 }
 
 .patient-content {
@@ -434,6 +434,32 @@ body {
     align-items: stretch;
 }
 
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-overlay.open {
+    display: flex;
+}
+
+.modal-box {
+    background: white;
+    border-radius: 8px;
+    padding: 32px;
+    width: min(600px, 90vw);
+    max-height: 80vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
 .scatter-plot-matrix {
     /* makes the checkbox panel sit on the left and the chart fill the rest */
     flex-direction: row;
@@ -649,6 +675,43 @@ body {
     font-size: 13px;
 }
 
+/* --- Scatter Lasso Selection --- */
+.scatter-lasso-clear-btn {
+    display: block;
+    margin: 4px auto 2px auto;
+    padding: 4px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    background: #b026ff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(176, 38, 255, 0.3);
+    transition: background 0.15s;
+}
+
+.scatter-lasso-clear-btn:hover {
+    background: #9200e6;
+}
+
+.sc-lasso-brush .selection {
+    fill: #b026ff;
+    fill-opacity: 0.12;
+    stroke: #b026ff;
+    stroke-width: 1.5;
+    stroke-dasharray: 4 2;
+}
+
+.scatter-lasso-hint {
+    margin-top: auto;
+    padding: 8px 6px 4px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #64748b;
+    border-top: 1px solid #e2e8f0;
+}
+
 .violin-filters {
     display: flex;
     align-items: center;
@@ -695,7 +758,7 @@ body {
 .vis-tooltip {
     /* always appears right at the cursor position */
     display: none;
-    position: fixed;
+    position: absolute;
     background: rgba(20, 20, 40, 0.9);
     color: #fff;
     font-size: 12px;
@@ -705,22 +768,6 @@ body {
     pointer-events: none;
     z-index: 3000;
     max-width: 240px;
-}
-
-.metric-info-tooltip {
-    display: none;
-    position: fixed;
-    background: #ffffff;
-    color: #1e293b;
-    font-size: 12px;
-    line-height: 1.5;
-    padding: 10px 14px;
-    border-radius: 8px;
-    border: 1px solid #e2e8f0;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-    pointer-events: none;
-    z-index: 4000;
-    max-width: 280px;
 }
 
 .disclaimer-footer {
@@ -778,4 +825,84 @@ body {
         grid-template-columns: 1fr;
         grid-template-rows: repeat(4, minmax(0, 1fr));
     }
+}
+
+/* --- Disclaimer Footer --- */
+.disclaimer-footer {
+    text-align: center;
+    font-size: 12px;
+    color: #94a3b8;
+    padding: 12px 24px;
+    border-top: 1px solid #e2e8f0;
+    background: #f8fafc;
+    line-height: 1.5;
+}
+
+/* --- Metric Info Tooltip (hover on metric labels) --- */
+.metric-info-tooltip {
+    display: none;
+    position: absolute;
+    background: #ffffff;
+    color: #1e293b;
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    pointer-events: none;
+    z-index: 4000;
+    max-width: 280px;
+}
+
+/* --- PCP Activity Dropdown & Legend --- */
+.pcp-controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 6px;
+    font-size: 12px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    border-bottom: 1px solid #eef2f7;
+}
+
+.pcp-controls-bar label {
+    color: #475569;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.pcp-controls-bar select {
+    font-size: 12px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+}
+
+.pcp-legend {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+    font-size: 11px;
+}
+
+.pcp-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pcp-legend-swatch {
+    width: 14px;
+    height: 4px;
+    border-radius: 2px;
+}
+
+/* Enlarge button positioning inside researcher panels */
+.scatter-plot-matrix .enlarge-btn,
+.violin-plot .enlarge-btn {
+    z-index: 20;
 }
