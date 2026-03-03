@@ -430,6 +430,8 @@ async function renderLinePlotWithStd(rows) {
 
     let maxWeek = 0;
     let minWeek = Number.POSITIVE_INFINITY;
+    let maxValue = 0;
+    let minValue = Number.POSITIVE_INFINITY; 
     const weekMap = new Map();
     byWeekActivity.forEach((entry) => {
         if (!weekMap.has(entry.week)) weekMap.set(entry.week, { week: entry.week });
@@ -439,6 +441,13 @@ async function renderLinePlotWithStd(rows) {
 
         maxWeek = Math.max(maxWeek, entry.week);
         minWeek = Math.min(minWeek, entry.week);
+        
+        maxValue = Math.max(maxValue, mean(entry.gsi) + getStandardDeviation(entry.gsi))
+        minValue = Math.min(minValue, mean(entry.gsi) - getStandardDeviation(entry.gsi))
+        maxValue = Math.max(maxValue, mean(entry.gir) + getStandardDeviation(entry.gir))
+        minValue = Math.min(minValue, mean(entry.gir) - getStandardDeviation(entry.gir))
+        maxValue = Math.max(maxValue, mean(entry.gil) + getStandardDeviation(entry.gil))
+        minValue = Math.min(minValue, mean(entry.gil) - getStandardDeviation(entry.gil))
 
         target[`GSI-${prefix}`] = mean(entry.gsi);
         target[`GIR-${prefix}`] = mean(entry.gir);
@@ -448,8 +457,15 @@ async function renderLinePlotWithStd(rows) {
         target[`GIL-${prefix}-STD`] = getStandardDeviation(entry.gil);
     });
 
-    const dimensions = ["GSI-TUG", "GSI-W", "GIR-TUG", "GIL-TUG", "GIR-W", "GIL-W"];
-    const data = Array.from(weekMap.values())
+    const predefDimentions = ["GSI-TUG", "GSI-W", "GIR-TUG", "GIL-TUG", "GIR-W", "GIL-W"];
+    // const dimensions = ["GSI-TUG", "GSI-W", "GIR-TUG", "GIL-TUG", "GIR-W", "GIL-W"];
+    var dimensions = [...predefDimentions];
+    const svg = container
+        .append("svg")
+        .attr("viewBox", `0 0 ${width} ${height}`)
+        .attr("preserveAspectRatio", "xMidYMid meet");
+
+        const data = Array.from(weekMap.values())
         .map((row) => ({
             week: row.week,
             "GSI-TUG": row["GSI-TUG"],
@@ -465,7 +481,6 @@ async function renderLinePlotWithStd(rows) {
             "GIR-W-STD": row["GIR-W-STD"],
             "GIL-W-STD": row["GIL-W-STD"]
         }))
-        .filter((row) => dimensions.every((dimension) => Number.isFinite(row[dimension])))
         .sort((a, b) => a.week - b.week);
 
     if (!data.length || !Number.isFinite(minWeek) || !Number.isFinite(maxWeek)) {
@@ -473,48 +488,117 @@ async function renderLinePlotWithStd(rows) {
         return;
     }
 
-    const svg = container
-        .append("svg")
-        .attr("viewBox", `0 0 ${width} ${height}`)
-        .attr("preserveAspectRatio", "xMidYMid meet");
-
     const chart = svg
         .append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
-
+    
     const y = d3.scaleLinear().range([plotHeight, 0]);
+    const yAxisGroup = chart.append("g")
+        .attr("class", "y-axis");
     const x = d3.scaleLinear().range([0, plotWidth]);
 
     x.domain([minWeek, maxWeek]);
-    y.domain([-5, 50]);
+    // y.domain([Math.max(0,minValue), maxValue]);
 
-    chart.append("g").call(d3.axisLeft(y));
+    // chart.append("g").call(d3.axisLeft(y));
     chart
         .append("g")
         .attr("transform", `translate(0,${plotHeight})`)
         .call(d3.axisBottom(x));
 
+    svg.append("text")
+        .attr("class", "x label")
+        .attr("text-anchor", "end")
+        .attr("x", width/2 + 50)
+        .attr("y", height - 5)
+        .text("Weeks");
+
+    svg.append("text")
+        .attr("class", "y label")
+        .attr("text-anchor", "middle")
+        .attr("y", 50)
+        .attr("x", -height/2)
+        .attr("dy", ".75em")
+        .attr("transform", "rotate(-90)")
+        .text("Metric");
+    
     const tooltip = d3.select("body")
         .append("div")
         .style("position", "absolute")
         .style("opacity", 0);
 
-    const color = d3.scaleOrdinal(d3.schemeCategory10);
+    const controlsDiv = container.append("div").attr("class", "scatter-controls");
+    controlsDiv.append("div").attr("class", "scatter-controls-label").text("Metrics");
+    const color = d3.scaleOrdinal().domain(predefDimentions).range(d3.schemeCategory10);
+    predefDimentions.forEach((metric) => {
+        const label = controlsDiv.append("label").attr("class", "linechart-check-label");
+        label.append("input")
+            .attr("type", "checkbox")
+            .property("checked", dimensions.includes(metric))
+            .on("change", function() {
+                const checked = this.checked;
+                if (checked) {
+                    dimensions.push(metric);
+                } else {
+                    dimensions = dimensions.filter(d => d !== metric);
+                }
+            updatechart(dimensions, chart, data, x, y, tooltip, color);
+            });
+        label.append("span")
+            .attr("class", "color-dot")
+            .style("background-color", color(metric));
+        label.append("span").text(metric)
+    });
+    updatechart(dimensions, chart, data, x, y, tooltip, color)
+    }
+    
+function updatechart(dimensions, chart, data, x, y, tooltip, color) {
 
+    const allValues = [];
+
+    dimensions.forEach(dimension => {
+        data.forEach(row => {
+            const mean = row[dimension];
+            const std = row[`${dimension}-STD`] || 0;
+
+            if (Number.isFinite(mean)) {
+                allValues.push(mean + std);
+                allValues.push(mean - std);
+            }
+        });
+    });
+
+    const min = d3.min(allValues);
+    const max = d3.max(allValues);
+
+    y.domain([Math.max(0, min), max]);
+
+
+    chart.select(".y-axis")
+        .call(d3.axisLeft(y));
+
+    chart.selectAll(".metric-line").remove();
+    chart.selectAll(".std-area").remove();
+    chart.selectAll(".pointmarkers").remove();
+
+    // const color = d3.scaleOrdinal(d3.schemeCategory10);
+    
     dimensions.forEach((dimension) => {
         const lineGroup = chart.append("g");
 
         const areaToShade = d3
             .area()
             .x((d) => x(d.week))
-            .y0((d) => y(d[dimension] - d[`${dimension}-STD`]))
+            .y0((d) => y(Math.max(0, d[dimension] - d[`${dimension}-STD`])))
             .y1((d) => y(d[dimension] + d[`${dimension}-STD`]));
         lineGroup
+            .attr("class", "metric-line")
             .append("path")
             .datum(data)
             .attr("fill", color(dimension))
             .attr("opacity", 0.5)
             .attr("d", areaToShade);
+        
     })
 
     dimensions.forEach((dimension) => {
@@ -530,26 +614,29 @@ async function renderLinePlotWithStd(rows) {
             .attr("fill", "none")
             .attr("stroke", color(dimension))
             .attr("stroke-width", 1)
-            .attr("d", line);
+            .attr("d", line)
+            .attr("class", "metric-line");
             
         lineGroup.selectAll("circle").data(data).enter().append("circle")
-        .attr("cx", d => x(d.week)).attr("cy", d => y(d[dimension])).attr("r", 3)
-        .style('cursor','pointer')
-        .on('mouseover', (e, d) => {
-            // use dark tooltip style for line chart
-            tooltip.style('background', '#1e293b').style('color', '#ffffff').style('padding', '8px 10px').style('border', 'none').style('min-width','60px');
-            const wk = d && d.week ? d.week : '?';
-            const value = d[dimension];
-            const stdValue = d[`${dimension}-STD`];
-            tooltip.style('opacity', 1).html(`Week: ${wk}<br/>${dimension}: ${value}<br/>${dimension}-STD: ${stdValue}`)
-                .style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
-        })
-        .on('mousemove', (e) => {
-            tooltip.style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
-        })
-        .on('mouseout', () => { tooltip.style('opacity', 0); });
+            .attr("class", "pointmarkers")
+            .attr("cx", d => x(d.week)).attr("cy", d => y(d[dimension])).attr("r", 3)
+            .style('cursor','pointer')
+            .on('mouseover', (e, d) => {
+                // use dark tooltip style for line chart
+                tooltip.style('background', '#1e293b').style('color', '#ffffff').style('padding', '8px 10px').style('border', 'none').style('min-width','60px');
+                const wk = d && d.week ? d.week : '?';
+                const value = d[dimension];
+                const stdValue = d[`${dimension}-STD`];
+                tooltip.style('opacity', 1).html(`Week: ${wk}<br/>${dimension}: ${value}<br/>${dimension}-STD: ${stdValue}`)
+                    .style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
+            })
+            .on('mousemove', (e) => {
+                tooltip.style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
+            })
+            .on('mouseout', () => { tooltip.style('opacity', 0); });
     });
     chart.selectAll("circle").raise()
+    // console.log(dimensions)
 }
 
 // Called on researcher load and checkbox changes:

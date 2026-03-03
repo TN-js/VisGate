@@ -407,6 +407,20 @@ body {
     align-items: stretch;
 }
 
+.linechart-check-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.color-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
 .parallel-coord-plot,
 .line-plot-with-std,
 .scatter-plot-matrix,
