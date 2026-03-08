@@ -48,13 +48,52 @@ const SCATTER_METRICS = [
 ];
 
 const VIOLIN_METRICS = [
-    { key: "GSI_pct_norm", name: "GSI" },
-    { key: "symmetry_ratio_norm", name: "Symmetry" },
-    { key: "gait_index_left_pct_norm", name: "GI Left" },
-    { key: "gait_index_right_pct_norm", name: "GI Right" },
-    { key: "step_time_cv_pct_norm", name: "Step CV" },
-    { key: "cycle_time_cv_pct_norm", name: "Cycle CV" }
+    { key: "GSI_pct", name: "GSI" },
+    { key: "symmetry_ratio", name: "Symmetry" },
+    { key: "gait_index_left_pct", name: "GI Left" },
+    { key: "gait_index_right_pct", name: "GI Right" },
+    { key: "step_time_cv_pct", name: "Step CV" },
+    { key: "cycle_time_cv_pct", name: "Cycle CV" }
 ];
+
+function percentileRankFromSortedValues(sortedValues, value) {
+    if (!Array.isArray(sortedValues) || !sortedValues.length || !Number.isFinite(value)) return NaN;
+    if (sortedValues.length === 1) return 1;
+    const left = d3.bisectLeft(sortedValues, value);
+    const right = d3.bisectRight(sortedValues, value);
+    const averageRankZeroBased = (left + right - 1) / 2;
+    return averageRankZeroBased / (sortedValues.length - 1);
+}
+
+function buildPercentileLookupByActivity(rows, metricKeys) {
+    const lookup = {};
+    rows.forEach((row) => {
+        const activity = String(row.activity || "").trim().toUpperCase();
+        if (!activity) return;
+        if (!lookup[activity]) lookup[activity] = {};
+        metricKeys.forEach((metricKey) => {
+            const numericValue = Number(row[metricKey]);
+            if (!Number.isFinite(numericValue)) return;
+            if (!lookup[activity][metricKey]) lookup[activity][metricKey] = [];
+            lookup[activity][metricKey].push(numericValue);
+        });
+    });
+
+    Object.keys(lookup).forEach((activity) => {
+        Object.keys(lookup[activity]).forEach((metricKey) => {
+            lookup[activity][metricKey].sort((a, b) => a - b);
+        });
+    });
+
+    return lookup;
+}
+
+function percentileForRowByActivity(row, metricKey, lookupByActivity) {
+    const activity = String(row.activity || "").trim().toUpperCase();
+    const numericValue = Number(row[metricKey]);
+    const sortedValues = lookupByActivity?.[activity]?.[metricKey] || [];
+    return percentileRankFromSortedValues(sortedValues, numericValue);
+}
 
 async function loadSharedHeader() {
     try {
@@ -634,6 +673,8 @@ async function renderViolinPlot(rows) {
         .property("selected", (d) => d === violinGroup)
         .text((d) => (d === "All" ? "All" : d.charAt(0).toUpperCase() + d.slice(1)));
 
+    const percentileLookupByActivity = buildPercentileLookupByActivity(rows, VIOLIN_METRICS.map((m) => m.key));
+
     let filteredRows = rows;
     if (violinActivity !== "All") {
         filteredRows = filteredRows.filter((row) => String(row.activity || "").toUpperCase() === violinActivity);
@@ -645,7 +686,9 @@ async function renderViolinPlot(rows) {
     const dataByMetric = VIOLIN_METRICS.map(({ key, name }) => ({
         key,
         name,
-        values: filteredRows.map((row) => Number(row[key])).filter((v) => Number.isFinite(v))
+        values: filteredRows
+            .map((row) => percentileForRowByActivity(row, key, percentileLookupByActivity))
+            .filter((v) => Number.isFinite(v))
     })).filter((entry) => entry.values.length > 0);
 
     const chartWrap = container.append("div").attr("class", "violin-chart-wrap");
@@ -686,7 +729,7 @@ async function renderViolinPlot(rows) {
         .attr("y", -38)
         .attr("text-anchor", "middle")
         .style("font-size", "12px")
-        .text("Normalized value [0-1]");
+        .text("Percentile by activity [0-1]");
 
     const kde = kernelDensityEstimator(kernelEpanechnikov(0.12), y.ticks(50));
 

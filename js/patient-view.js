@@ -4,10 +4,10 @@ import { loadSharedHeader } from "./main.js";
 const ACTIVITY_NAMES = { "SC": "Stair Climbing", "STS": "Sit-To-Stand", "TUG": "Timed Up & Go", "W": "Walking" };
 const ACTIVITIES = ["SC", "STS", "TUG", "W"];
 const ACTIVITY_METRICS = {
-    "W": ["step_time_cv_pct_norm", "symmetry_ratio_norm", "cadence_total_steps_min_norm", "gait_index_left_pct_norm", "GSI_pct_norm"],
-    "STS": ["cycle_time_cv_pct_norm", "total_duration_sec_norm", "total_peaks_norm"],
-    "TUG": ["total_duration_sec_norm", "total_peaks_norm", "cadence_total_steps_min_norm"],
-    "SC": ["total_peaks_norm", "total_duration_sec_norm", "cadence_total_steps_min_norm"]
+    "W": ["IPI_left_mean_sec", "IPI_left_std_sec", "IPI_right_mean_sec", "IPI_right_std_sec", "cadence_total_steps_min", "symmetry_ratio", "GA_signed_pct"],
+    "STS": ["step_time_mean_sec", "step_time_std_sec", "cycle_time_mean_sec", "cycle_time_std_sec"],
+    "TUG": ["IPI_left_mean_sec", "IPI_left_std_sec", "IPI_right_mean_sec", "IPI_right_std_sec", "cadence_total_steps_min", "symmetry_ratio", "GA_signed_pct"],
+    "SC": ["step_time_mean_sec", "step_time_std_sec", "cycle_time_mean_sec", "cycle_time_std_sec"]
 };
 
 // Global State
@@ -26,6 +26,24 @@ const tooltip = d3.select("body").append("div").attr("class", "d3-tooltip").styl
 const scoreColorScale = d3.scaleLinear()
     .domain([0, 50, 80, 100])
     .range(["#ef4444", "#f59e0b", "#10b981", "#059669"]);
+
+function percentileRankFromSortedValues(sortedValues, value) {
+    if (!Array.isArray(sortedValues) || !sortedValues.length || !Number.isFinite(value)) return 0;
+    if (sortedValues.length === 1) return 1;
+    const left = d3.bisectLeft(sortedValues, value);
+    const right = d3.bisectRight(sortedValues, value);
+    const averageRankZeroBased = (left + right - 1) / 2;
+    return averageRankZeroBased / (sortedValues.length - 1);
+}
+
+function getActivityMetricPercentile(activity, metricKey, value) {
+    const activityRows = activityDataSets[activity] || [];
+    const sortedValues = activityRows
+        .map((row) => Number(row[metricKey]))
+        .filter((v) => Number.isFinite(v))
+        .sort((a, b) => a - b);
+    return percentileRankFromSortedValues(sortedValues, Number(value));
+}
 
 /**
  * 1. INITIALIZATION & DIRECTORY SCANNING
@@ -420,17 +438,28 @@ function renderRadarCharts(mode = 'both', isEnlarged = false) {
         }
 
         const actWeekData = activityDataSets[activity]?.find(d => d.week === selectedWeek);
-        const metricValues = (ACTIVITY_METRICS[activity] || []).map(k => {
-            const axisRaw = k.replace(/_norm|_pct/g, '').replace(/_/g, ' ').trim();
+        const metricValues = (ACTIVITY_METRICS[activity] || []).map(rawMetricKey => {
+            const axisRaw = rawMetricKey.replace(/_pct/g, '').replace(/_/g, ' ').trim();
             const axis = axisRaw.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-            const value = (function(){
-                const raw = actWeekData ? actWeekData[k] : 0;
-                const n = Number(raw);
-                return (isFinite(n) ? n : 0) * 100;
+            const actualValue = (function(){
+                const rawActual = actWeekData ? actWeekData[rawMetricKey] : 0;
+                const n = Number(rawActual);
+                return isFinite(n) ? n : 0;
             })();
-            return { axis, value };
+            const normalizedValue = (function() {
+                if (!actWeekData) return 0;
+                const percentile = getActivityMetricPercentile(activity, rawMetricKey, actWeekData[rawMetricKey]);
+                const n = Number(percentile);
+                return isFinite(n) ? n : 0;
+            })();
+            return {
+                axis,
+                value: normalizedValue * 100,
+                normalizedValue,
+                actualValue
+            };
         });
-        drawRadar(targetMet, [{ values: metricValues }], null, size);
+        drawRadar(targetMet, [{ values: metricValues }], null, size, { showMetricTooltipDetails: true, normalizationLabel: 'Percentile' });
     }
 
     // draw activity breakdown radar (if requested)
@@ -454,7 +483,7 @@ function renderRadarCharts(mode = 'both', isEnlarged = false) {
     }
 }
 
-function drawRadar(containerId, data, onClick, size) {
+function drawRadar(containerId, data, onClick, size, options = {}) {
     const cfg = { w: size, h: size, margin: 60, levels: 5, maxValue: 100 };
     const container = d3.select(containerId);
     container.selectAll("*").remove();
@@ -546,6 +575,15 @@ function drawRadar(containerId, data, onClick, size) {
                 const code = d && d.axis ? d.axis : 'Value';
                 const label = ACTIVITY_NAMES[code] || code;
                 const val = d && isFinite(d.value) ? Math.round(d.value) : 0;
+                const hasMetricDetails = options.showMetricTooltipDetails && d && Object.prototype.hasOwnProperty.call(d, 'normalizedValue');
+                if (hasMetricDetails) {
+                    const normalizedPct = Math.round((d.normalizedValue || 0) * 1000) / 10;
+                    const actualFormatted = Number.isFinite(d.actualValue) ? d.actualValue.toFixed(3).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1') : '0';
+                    const normalizationLabel = options.normalizationLabel || 'Normalized';
+                    tooltip.style('opacity', 1).html('<strong>' + label + '</strong><br/>Actual: ' + actualFormatted + '<br/>' + normalizationLabel + ': ' + normalizedPct + '%')
+                        .style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
+                    return;
+                }
                 tooltip.style('opacity', 1).html('<strong>' + label + '</strong><br/>' + val + '%')
                     .style('left', (e.pageX + 10) + 'px').style('top', (e.pageY + 10) + 'px');
             })
