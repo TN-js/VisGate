@@ -1033,6 +1033,8 @@ async function renderViolinPlot(rows) {
         .property("selected", (d) => d === violinGroup)
         .text((d) => (d === "All" ? "All" : d.charAt(0).toUpperCase() + d.slice(1)));
 
+    const percentileLookupByActivity = buildPercentileLookupByActivity(rows, VIOLIN_METRICS.map((m) => m.key));
+
     let filteredRows = rows;
     if (violinGroup !== "All") {
         filteredRows = filteredRows.filter((row) => String(row.user_group || "").toLowerCase() === violinGroup);
