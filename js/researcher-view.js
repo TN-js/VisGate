@@ -1244,6 +1244,34 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
 
     // Track all cell brushes so we can clear others when one fires.
     const cellBrushes = [];
+    const cellCorrelationMeta = [];
+
+    const setCorrelationText = (meta, corr) => {
+        const fillColor = Math.abs(corr) > 0.5 ? "#c0392b" : "#1f2937";
+        const label = Number.isFinite(corr) ? `r=${corr.toFixed(2)}` : "r=n/a";
+        meta.rText
+            .style("fill", fillColor)
+            .text(label);
+    };
+
+    const updateAllCellCorrelations = () => {
+        const hasSelection = scatterLassoSelectedIds.size > 0;
+        cellCorrelationMeta.forEach((meta) => {
+            if (!hasSelection) {
+                setCorrelationText(meta, meta.baseCorr);
+                return;
+            }
+            const selectedRows = meta.valid.filter((row) => scatterLassoSelectedIds.has(scatterRowKey(row)));
+            const selectedCorr =
+                selectedRows.length >= 2
+                    ? pearsonR(
+                          selectedRows.map((row) => row[meta.colKey]),
+                          selectedRows.map((row) => row[meta.rowKey])
+                      )
+                    : NaN;
+            setCorrelationText(meta, selectedCorr);
+        });
+    };
 
     metrics.forEach((rowMetric, rowIndex) => {
         metrics.forEach((colMetric, colIndex) => {
@@ -1341,12 +1369,14 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                             if (scatterLassoSelectedIds.size > 0) {
                                 scatterLassoLocked = true;
                                 applyScatterLassoStyles(svg.node());
+                                updateAllCellCorrelations();
                                 // Show clear button
-                                showLassoClearButton(wrapEl, svg.node(), cellBrushes);
+                                showLassoClearButton(wrapEl, svg.node(), cellBrushes, updateAllCellCorrelations);
                             } else {
                                 // Empty selection
                                 d3.select(this).call(brush.move, null);
                                 applyScatterLassoStyles(svg.node());
+                                updateAllCellCorrelations();
                             }
                         });
 
@@ -1385,14 +1415,26 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                     })
                     .on("mouseout", () => tooltip.style("display", "none"));
 
-                cellGroup
+                const rText = cellGroup
                     .append("text")
                     .attr("x", cellW - 3)
                     .attr("y", 10)
                     .attr("text-anchor", "end")
-                    .style("font-size", "8px")
-                    .style("fill", Math.abs(corr) > 0.5 ? "#c0392b" : "#6b7280")
+                    .style("font-size", "11px")
+                    .style("font-weight", "700")
+                    .style("paint-order", "stroke")
+                    .style("stroke", "#ffffff")
+                    .style("stroke-width", "2px")
+                    .style("fill", Math.abs(corr) > 0.5 ? "#c0392b" : "#1f2937")
                     .text(`r=${corr.toFixed(2)}`);
+
+                cellCorrelationMeta.push({
+                    rowKey: rowMetric.key,
+                    colKey: colMetric.key,
+                    valid,
+                    baseCorr: corr,
+                    rText
+                });
             }
 
             if (rowIndex === n - 1) {
@@ -1416,10 +1458,12 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
             }
         });
     });
+
+    updateAllCellCorrelations();
 }
 
 // Shows a "Clear selection" button above the scatter matrix when lasso is active.
-function showLassoClearButton(wrapEl, svgEl, cellBrushes) {
+function showLassoClearButton(wrapEl, svgEl, cellBrushes, onClear) {
     const parent = wrapEl.parentElement;
     if (!parent) return;
     // Remove existing button
@@ -1438,6 +1482,7 @@ function showLassoClearButton(wrapEl, svgEl, cellBrushes) {
             groupRef.call(brushRef.move, null);
         });
         applyScatterLassoStyles(svgEl);
+        if (typeof onClear === "function") onClear();
         btn.remove();
     });
     // Insert before the svg wrapper
