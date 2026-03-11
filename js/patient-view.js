@@ -31,6 +31,50 @@ const METRIC_UNITS = {
     total_peaks: ""
 };
 
+// Human-readable metric descriptions (copied/extended from researcher view metadata)
+const METRIC_INFO = {
+    composite_score: "Composite mobility score combining gait indicators into one summary metric.",
+    GSI_pct: "Gait Symmetry Index. Lower values indicate more symmetric (healthier) gait.",
+    symmetry_ratio: "Left/right gait symmetry. Values near 1.0 indicate balanced gait.",
+    step_time_cv_pct: "Step time variability (coefficient of variation). Lower is generally more stable.",
+    cycle_time_cv_pct: "Gait cycle time variability. Lower values indicate more consistent timing.",
+    cadence_total_steps_min: "Cadence in steps per minute.",
+    gait_index_left_pct: "Left gait index score.",
+    gait_index_right_pct: "Right gait index score.",
+    step_time_mean_sec: "Average step time in seconds.",
+    step_time_std_sec: "Standard deviation of step time (seconds).",
+    cycle_time_mean_sec: "Average gait cycle time in seconds.",
+    cycle_time_std_sec: "Standard deviation of gait cycle time (seconds).",
+    IPI_left_mean_sec: "Inter-peak interval (left) mean in seconds.",
+    IPI_left_std_sec: "Inter-peak interval (left) standard deviation in seconds.",
+    IPI_right_mean_sec: "Inter-peak interval (right) mean in seconds.",
+    IPI_right_std_sec: "Inter-peak interval (right) standard deviation in seconds.",
+    GA_signed_pct: "Gait acceleration (signed) percentage.",
+    total_steps: "Total step count for the session.",
+    total_duration_sec: "Total recording duration in seconds.",
+    total_peaks: "Total detected gait peaks in the signal.",
+    GSI_pct_norm: "Normalized Gait Symmetry Index.",
+    symmetry_ratio_norm: "Normalized gait symmetry metric.",
+    gait_index_left_pct_norm: "Normalized left gait index.",
+    gait_index_right_pct_norm: "Normalized right gait index.",
+    step_time_cv_pct_norm: "Normalized step-time variability.",
+    cycle_time_cv_pct_norm: "Normalized cycle-time variability.",
+    "GSI-TUG": "Gait Symmetry Index averaged across TUG (Timed Up and Go) trials.",
+    "GSI-W": "Gait Symmetry Index averaged across walking trials.",
+    "GIR-TUG": "Right gait index averaged across TUG trials.",
+    "GIL-TUG": "Left gait index averaged across TUG trials.",
+    "GIR-W": "Right gait index averaged across walking trials.",
+    "GIL-W": "Left gait index averaged across walking trials."
+};
+
+
+function getMetricTooltip(metricKey, fallbackLabel = "") {
+    if (metricKey && METRIC_INFO[metricKey]) return METRIC_INFO[metricKey];
+    // fallback: convert key to readable label
+    if (metricKey) return metricKey.replace(/_/g, ' ');
+    return fallbackLabel || metricKey || "Metric details not available.";
+}
+
 // Global State
 let globalCompositeData = []; 
 let activityDataSets = {};
@@ -816,6 +860,11 @@ function drawRadar(containerId, data, onClick, size, options = {}) {
             const label = ACTIVITY_NAMES[code] || code;
             const hasMetricDetails = options.showMetricTooltipDetails && d && Object.prototype.hasOwnProperty.call(d, 'normalizedValue');
             let tooltipHtml = '<strong>' + label + '</strong>';
+            // If metric descriptions are available, show them first for metric radars
+            if (options.showMetricTooltipDetails && d && d.rawMetricKey) {
+                const desc = getMetricTooltip(d.rawMetricKey, label);
+                tooltipHtml += '<br/><div style="color:#475569;font-size:12px;margin-top:6px;margin-bottom:6px;">' + desc + '</div>';
+            }
             
             if (hasMetricDetails) {
                 // For metric charts: always show both patient and mean data
