@@ -87,7 +87,10 @@ let selectedActivity = null;
 let sliderPositions = [25, 50, 75]; // three handles (percents)
 let currentWeights = [25, 25, 25, 25];
 let derivedCompositeData = []; // globalCompositeData remapped by currentWeights
-const ACTIVITY_COLORS = { "SC": "#f59e0b", "STS": "#3b82f6", "TUG": "#06b6d4", "W": "#7c3aed" };
+// Activity colors: SC=red, STS=yellow, TUG=green, W=blue
+const ACTIVITY_COLORS = { "SC": "#ef4444", "STS": "#f59e0b", "TUG": "#10b981", "W": "#3b82f6" };
+// Composite (aggregated) series color
+const COMPOSITE_COLOR = "#7c3aed";
 
 const tooltip = d3.select("body").append("div").attr("class", "d3-tooltip").style("opacity", 0);
 const scoreColorScale = d3.scaleLinear()
@@ -542,16 +545,21 @@ function renderLineChart(data, target = "#line-chart", defaultW = 700, h = 300) 
         .text('Overall Composite Score');
 
     const line = d3.line().x(d => x(d.week)).y(d => y(d.composite_score_overall));
-    svg.append("path").datum(data).attr("fill", "none").attr("stroke", "#3b82f6").attr("stroke-width", 2.5).attr("d", line);
+    svg.append("path").datum(data).attr("fill", "none").attr("stroke", COMPOSITE_COLOR).attr("stroke-width", 2.5).attr("d", line);
 
     svg.selectAll("circle").data(data).enter().append("circle")
-        .attr("cx", d => x(d.week)).attr("cy", d => y(d.composite_score_overall)).attr("r", 5)
-        .attr("fill", d => d.week === selectedWeek ? "#f59e0b" : "#3b82f6")
+        .attr("cx", d => x(d.week)).attr("cy", d => y(d.composite_score_overall))
+        .attr("r", d => (d.week === selectedWeek ? 8 : 5))
+        .attr("fill", d => (d.week === selectedWeek ? '#ffffff' : COMPOSITE_COLOR))
+        .attr('stroke', d => (d.week === selectedWeek ? COMPOSITE_COLOR : 'none'))
+        .attr('stroke-width', d => (d.week === selectedWeek ? 2 : 0))
         .style('cursor','pointer')
         .on("click", (e, d) => { selectedWeek = d.week; updatePatientView(); })
         .on('mouseover', (e, d) => {
-            // use dark tooltip style for line chart
-            tooltip.style('background', '#1e293b').style('color', '#ffffff').style('padding', '8px 10px').style('border', 'none').style('min-width','60px');
+            // use consistent light tooltip style
+            tooltip.style('position', 'absolute').style('pointer-events', 'none')
+                .style('background', '#ffffff').style('color', '#0f172a').style('padding', '6px 8px')
+                .style('border', '1px solid #e2e8f0').style('border-radius', '6px').style('font-size', '13px').style('min-width', '60px');
             const wk = d && d.week ? d.week : '?';
             const score = d && isFinite(d.composite_score_overall) ? Math.round(d.composite_score_overall) : 0;
             tooltip.style('opacity', 1).html(`<strong>Week ${wk}</strong><br/>${score}`)
@@ -681,7 +689,9 @@ function renderRadarCharts(mode = 'both', isEnlarged = false) {
             showMetricTooltipDetails: true,
             meanColor: '#94a3b8',
             meanPointColor: '#94a3b8',
-            meanPointColorMode: 'fixed'
+            meanPointColorMode: 'fixed',
+            // force the patient/activity polygon on the left to use composite/purple fill
+            patientFillColor: COMPOSITE_COLOR
         });
     }
 
@@ -740,7 +750,7 @@ function drawRadar(containerId, data, onClick, size, options = {}) {
     const labelWrapWidth = isLargeRadar ? 156 : 82;
     // Increase margin to accommodate legend below
     const bottomMarginExtra = options.meanData ? (isLargeRadar ? 66 : 36) : 0;
-    const cfg = { w: size, h: size, margin: (isLargeRadar ? 122 : 62) + bottomMarginExtra, levels: 5, maxValue: 100 };
+    const cfg = { w: size, h: size, margin: (isLargeRadar ? 122 : 62) + bottomMarginExtra, levels: 4, maxValue: 100 };
     const container = d3.select(containerId);
     container.selectAll("*").remove();
     container.style("overflow", "visible");
@@ -787,8 +797,10 @@ function drawRadar(containerId, data, onClick, size, options = {}) {
         if (options.meanPointColor) return options.meanPointColor;
         return meanColor;
     };
-    // choose color: if axes map to activities use their color, otherwise use selectedActivity color
-    const polygonColor = (data[0].values.every(v => ACTIVITY_COLORS[v.axis])) ? (ACTIVITY_COLORS[data[0].values[0].axis] || '#3b82f6') : (ACTIVITY_COLORS[selectedActivity] || '#3b82f6');
+    // choose color: allow explicit override via options.patientFillColor, otherwise
+    // if axes map to activities use their color, otherwise use selectedActivity color
+    let polygonColor = (data[0].values.every(v => ACTIVITY_COLORS[v.axis])) ? (ACTIVITY_COLORS[data[0].values[0].axis] || COMPOSITE_COLOR) : (ACTIVITY_COLORS[selectedActivity] || COMPOSITE_COLOR);
+    if (options.patientFillColor) polygonColor = options.patientFillColor;
 
     // Draw mean polygon layer first so patient layer stays on top
     if (options.meanData && Array.isArray(options.meanData) && options.meanData.length) {
