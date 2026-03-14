@@ -4,7 +4,7 @@
 
 const RESEARCHER_DATA_PATH = "data/dashboard_data.csv"; // csv source file
 let cachedDashboardRows = []; // used to populate with all rows in 'dashboard_data.csv'
-let filteredData = []; // the filtered data from brushing in the parallel coordinates plot
+let filteredData = []; // raw rows filtered by PCP brushes
 let violinMetricKey = "GSI_pct";
 // Default scatter matrix metric selection shown on first render
 let selectedScatterMetricKeys = ["composite_score", "GSI_pct", "step_time_cv_pct", "symmetry_ratio"];
@@ -12,9 +12,11 @@ let selectedScatterMetricKeys = ["composite_score", "GSI_pct", "step_time_cv_pct
 const parallelAxisFilters = {};
 let parallelBrushHistory = []; // Tracks chronological order of brushed dimensions
 
-// Scatter lasso selection state (only active in expanded/modal view)
+// Scatter selection state
 let scatterLassoSelectedIds = new Set(); // holds "userId::week::activity" keys
 let scatterLassoLocked = false;          // true while a lasso selection is active
+let parallelRenderState = null;          // holds latest PCP render context for cross-filtering
+let scatterSelectionDimensions = new Set(); // PCP dimensions set by scatter selection
 
 // For finetuning sizings of the plot layout
 const PLOT_LAYOUT = {
@@ -197,8 +199,9 @@ function getPlotFrame(panelId, reserveTopRatio = 0) {
 
 // Checks if a plot row falls within all active brush selections
 // Used to gray out non-selected lines and to filter downstream charts
-function rowPassesParallelFilters(row, dimensions) {
+function rowPassesParallelFilters(row, dimensions, excludedDimensions = null) {
     for (const dimension of dimensions) {
+        if (excludedDimensions && excludedDimensions.has(dimension)) continue;
         const range = parallelAxisFilters[dimension];
         if (!range) continue;
         const value = row[dimension];
@@ -213,6 +216,166 @@ function rowPassesParallelGroupFilter(row) {
     if (!parallelGroupSelection || parallelGroupSelection.size === 0) return true;
     const group = String(row.__rawRows?.[0]?.user_group || row.__raw?.user_group || "").toLowerCase();
     return parallelGroupSelection.has(group);
+}
+
+function rowPassesScatterSelection(row) {
+    if (scatterLassoSelectedIds.size === 0) return true;
+    const rawRows = Array.isArray(row.__rawRows)
+        ? row.__rawRows
+        : row.__raw
+            ? [row.__raw]
+            : [];
+    return rawRows.some((rawRow) => scatterLassoSelectedIds.has(scatterRowKey(rawRow)));
+}
+
+function removeDimensionsFromBrushHistory(dimensions) {
+    if (!dimensions || !dimensions.length) return;
+    parallelBrushHistory = parallelBrushHistory.filter((dimension) => !dimensions.includes(dimension));
+}
+
+function clearScatterSelectionFilters() {
+    if (!parallelRenderState || scatterSelectionDimensions.size === 0) return;
+    const { brushesByDim, isRestoringBrushRef } = parallelRenderState;
+    const dimsToClear = Array.from(scatterSelectionDimensions);
+    removeDimensionsFromBrushHistory(dimsToClear);
+    dimsToClear.forEach((dimension) => {
+        delete parallelAxisFilters[dimension];
+        const brushEntry = brushesByDim?.[dimension];
+        if (brushEntry) {
+            isRestoringBrushRef.value = true;
+            brushEntry.group.call(brushEntry.brush.move, null);
+            isRestoringBrushRef.value = false;
+        }
+    });
+    scatterSelectionDimensions.clear();
+}
+
+function applyScatterSelectionToParallel(metricX, metricY, selectedRows) {
+    if (!parallelRenderState) return;
+    const { dimensionDefs, yByDimension, brushesByDim, isRestoringBrushRef } = parallelRenderState;
+    if (!dimensionDefs || !yByDimension || !brushesByDim) return;
+
+    clearScatterSelectionFilters();
+
+    if (!selectedRows || selectedRows.length === 0) return;
+
+    const dimensionsToSet = [];
+    const activityRanges = new Map();
+    [metricX, metricY].forEach((metricKey) => {
+        const valuesByActivity = new Map();
+        selectedRows.forEach((row) => {
+            const activity = String(row.activity || "").trim().toUpperCase();
+            const value = Number(row[metricKey]);
+            if (!activity || !Number.isFinite(value)) return;
+            if (!valuesByActivity.has(activity)) valuesByActivity.set(activity, []);
+            valuesByActivity.get(activity).push(value);
+        });
+
+        valuesByActivity.forEach((values, activity) => {
+            if (!values.length) return;
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+            if (!activityRanges.has(activity)) activityRanges.set(activity, new Map());
+            activityRanges.get(activity).set(metricKey, [min, max]);
+        });
+    });
+
+    if (!activityRanges.size) return;
+
+    dimensionDefs.forEach((def) => {
+        const activityKey = String(def.activity || "").trim().toUpperCase();
+        const rangesForActivity = activityRanges.get(activityKey);
+        if (!rangesForActivity) return;
+        const range = rangesForActivity.get(def.key);
+        if (!range) return;
+        parallelAxisFilters[def.name] = range;
+        dimensionsToSet.push(def.name);
+    });
+
+    if (!dimensionsToSet.length) return;
+
+    dimensionsToSet.forEach((dimension) => {
+        parallelBrushHistory = parallelBrushHistory.filter((d) => d !== dimension);
+        parallelBrushHistory.push(dimension);
+        scatterSelectionDimensions.add(dimension);
+        const brushEntry = brushesByDim[dimension];
+        const yScale = yByDimension[dimension];
+        const range = parallelAxisFilters[dimension];
+        if (brushEntry && yScale && range) {
+            isRestoringBrushRef.value = true;
+            brushEntry.group.call(brushEntry.brush.move, [yScale(range[1]), yScale(range[0])]);
+            isRestoringBrushRef.value = false;
+        }
+    });
+}
+
+ 
+
+function requestParallelSync(options = {}) {
+    if (!parallelRenderState) return Promise.resolve();
+    if (typeof parallelRenderState.applyLineStyles === "function") {
+        parallelRenderState.applyLineStyles();
+    }
+    return syncFilteredDatasetFromParallel(parallelRenderState.data, parallelRenderState.dimensions, options);
+}
+
+function resetAllFilters() {
+    if (!parallelRenderState) return;
+    const { brushesByDim, isRestoringBrushRef, legendInputs } = parallelRenderState;
+    const hasAxisFilters = Object.keys(parallelAxisFilters).length > 0;
+    const hasGroupFilters = parallelGroupSelection.size < PARALLEL_GROUPS.length;
+    const hasScatterSelection = scatterLassoSelectedIds.size > 0 || scatterSelectionDimensions.size > 0;
+    if (!hasAxisFilters && !hasGroupFilters && !hasScatterSelection) return;
+
+    isRestoringBrushRef.value = true;
+    parallelBrushHistory = [];
+    Object.keys(parallelAxisFilters).forEach((dimension) => {
+        delete parallelAxisFilters[dimension];
+        const brushEntry = brushesByDim?.[dimension];
+        if (brushEntry) {
+            brushEntry.group.call(brushEntry.brush.move, null);
+        }
+    });
+    isRestoringBrushRef.value = false;
+    scatterSelectionDimensions.clear();
+
+    if (hasGroupFilters) {
+        parallelGroupSelection = new Set(PARALLEL_GROUPS);
+        if (legendInputs) legendInputs.property("checked", true);
+    }
+
+    scatterLassoSelectedIds.clear();
+    scatterLassoLocked = false;
+
+    requestParallelSync();
+}
+
+function undoLastFilter() {
+    if (!parallelRenderState) return;
+    if (scatterLassoSelectedIds.size > 0 && scatterSelectionDimensions.size > 0) {
+        scatterLassoSelectedIds.clear();
+        scatterLassoLocked = false;
+        clearScatterSelectionFilters();
+        requestParallelSync();
+        return;
+    }
+
+    const { brushesByDim, isRestoringBrushRef } = parallelRenderState;
+    while (parallelBrushHistory.length > 0) {
+        const lastDimension = parallelBrushHistory.pop();
+        if (parallelAxisFilters[lastDimension]) {
+            delete parallelAxisFilters[lastDimension];
+            scatterSelectionDimensions.delete(lastDimension);
+            isRestoringBrushRef.value = true;
+            if (brushesByDim?.[lastDimension]) {
+                brushesByDim[lastDimension].group.call(brushesByDim[lastDimension].brush.move, null);
+            }
+            isRestoringBrushRef.value = false;
+            requestParallelSync();
+            return;
+        }
+    }
 }
 
 function hasMeaningfulParallelValue(value) {
@@ -282,20 +445,20 @@ function buildParallelDimensionDefs(rows) {
 
 function updateParallelFilterControls(activeFilterCount, filteredLineCount, totalLineCount) {
     const controlsEl = document.getElementById("parallel-filter-controls");
-    if (!controlsEl) return;
-
-    const statusEl = controlsEl.querySelector(".parallel-filter-status");
-    if (statusEl) {
-        if (activeFilterCount > 0) {
-            statusEl.textContent = `${filteredLineCount}/${totalLineCount} lines`;
-        } else {
-            statusEl.textContent = `${totalLineCount}/${totalLineCount} lines`;
+    if (controlsEl) {
+        const statusEl = controlsEl.querySelector(".parallel-filter-status");
+        if (statusEl) {
+            if (activeFilterCount > 0) {
+                statusEl.textContent = `${filteredLineCount}/${totalLineCount} lines`;
+            } else {
+                statusEl.textContent = `${totalLineCount}/${totalLineCount} lines`;
+            }
         }
-    }
 
-    const undoBtn = controlsEl.querySelector("#parallel-undo-filters");
-    if (undoBtn) {
-        undoBtn.disabled = parallelBrushHistory.length === 0;
+        const undoBtn = controlsEl.querySelector("#parallel-undo-filters");
+        if (undoBtn) {
+            undoBtn.disabled = parallelBrushHistory.length === 0 && scatterSelectionDimensions.size === 0;
+        }
     }
 }
 
@@ -305,32 +468,59 @@ function updateParallelFilterControls(activeFilterCount, filteredLineCount, tota
 // 3. If filters active -> keep rows passing all active axis filters
 // 4. Update the status text
 // 5. Re-render the other 3 charts with the filtered data in parallel
-async function syncFilteredDatasetFromParallel(parallelRows, dimensions) {
+async function syncFilteredDatasetFromParallel(parallelRows, dimensions, options = {}) {
     const axisFilterCount = Object.values(parallelAxisFilters).filter((range) => Array.isArray(range) && range.length === 2).length;
     const hasGroupFilter = parallelGroupSelection.size > 0 && parallelGroupSelection.size < PARALLEL_GROUPS.length;
-    const activeFilterCount = axisFilterCount + (hasGroupFilter ? 1 : 0);
+    const hasScatterFilter = scatterLassoSelectedIds.size > 0;
+    const nonScatterAxisCount = hasScatterFilter
+        ? Object.keys(parallelAxisFilters).filter(
+            (dimension) =>
+                Array.isArray(parallelAxisFilters[dimension]) &&
+                parallelAxisFilters[dimension].length === 2 &&
+                !scatterSelectionDimensions.has(dimension)
+        ).length
+        : axisFilterCount;
+    const activeFilterCount = nonScatterAxisCount + (hasGroupFilter ? 1 : 0) + (hasScatterFilter ? 1 : 0);
     const sourceRows = Array.isArray(parallelRows) ? parallelRows : [];
-    const filteredParallelRows = activeFilterCount
-        ? sourceRows.filter((row) => rowPassesParallelFilters(row, dimensions) && rowPassesParallelGroupFilter(row))
+    const hasAxisOrGroupFilter = nonScatterAxisCount > 0 || hasGroupFilter;
+    const baseParallelRows = (hasAxisOrGroupFilter || hasScatterFilter)
+        ? sourceRows.filter(
+            (row) =>
+                rowPassesParallelFilters(row, dimensions, hasScatterFilter ? scatterSelectionDimensions : null) &&
+                rowPassesParallelGroupFilter(row) &&
+                rowPassesScatterSelection(row)
+        )
         : sourceRows.slice();
+    const filteredParallelRows = baseParallelRows.slice();
     const totalLineCount = sourceRows.length;
     const filteredLineCount = filteredParallelRows.length;
 
+    let baseRawRows = [];
+    if (!hasAxisOrGroupFilter && !hasScatterFilter) {
+        baseRawRows = cachedDashboardRows.slice();
+    } else if (hasScatterFilter) {
+        const allowedSessions = new Set(baseParallelRows.map((row) => row.__sessionKey));
+        baseRawRows = cachedDashboardRows.filter((row) =>
+            scatterLassoSelectedIds.has(scatterRowKey(row)) &&
+            allowedSessions.has(`${row.user_id}::${row.week}`)
+        );
+    } else if (baseParallelRows.length && Array.isArray(baseParallelRows[0].__rawRows)) {
+        // PCP lines represent patient-week sessions; flatten back to original row granularity.
+        baseRawRows = baseParallelRows.flatMap((row) => row.__rawRows);
+    } else if (baseParallelRows.length && baseParallelRows[0].__raw) {
+        baseRawRows = baseParallelRows.map((row) => row.__raw);
+    }
+
     if (!activeFilterCount) {
         filteredData = cachedDashboardRows.slice();
-    } else if (filteredParallelRows.length && Array.isArray(filteredParallelRows[0].__rawRows)) {
-        // PCP lines represent patient-week sessions; flatten back to original row granularity.
-        filteredData = filteredParallelRows.flatMap((row) => row.__rawRows);
-    } else if (filteredParallelRows.length && filteredParallelRows[0].__raw) {
-        filteredData = filteredParallelRows.map((row) => row.__raw);
     } else {
-        filteredData = [];
+        filteredData = baseRawRows.slice();
     }
 
     updateParallelFilterControls(activeFilterCount, filteredLineCount, totalLineCount);
     await Promise.all([
         renderLinePlotWithStd(filteredData),
-        renderScatterPlotMatrix(filteredData),
+        options.skipScatterRedraw ? Promise.resolve() : renderScatterPlotMatrix(filteredData),
         renderViolinPlot(filteredData)
     ]);
 }
@@ -374,9 +564,10 @@ async function renderParallelCoordinatesPlot(rows) {
         })
         .filter((row) => dimensions.filter((dimension) => Number.isFinite(row[dimension])).length >= 2);
 
-    let isRestoringBrush = false;
+    const isRestoringBrushRef = { value: false };
     const brushesByDim = {};
     let applyLineStyles = () => {};
+    let legendInputs = null;
 
     const toolbar = container.append("div").attr("class", "pcp-toolbar");
     const legendBar = toolbar.append("div").attr("class", "pcp-controls-bar");
@@ -405,6 +596,7 @@ async function renderParallelCoordinatesPlot(rows) {
         item.append("span").attr("class", "pcp-legend-swatch").style("background", color);
         item.append("span").text(group.charAt(0).toUpperCase() + group.slice(1));
     });
+    legendInputs = legend.selectAll("input");
 
     const controls = toolbar
         .append("div")
@@ -415,29 +607,7 @@ async function renderParallelCoordinatesPlot(rows) {
         .append("button")
         .attr("type", "button")
         .text("Reset filters")
-        .on("click", async () => {
-            const hasAxisFilters = Object.keys(parallelAxisFilters).length > 0;
-            const hasGroupFilters = parallelGroupSelection.size < PARALLEL_GROUPS.length;
-            if (!hasAxisFilters && !hasGroupFilters) return;
-
-            isRestoringBrush = true;
-            parallelBrushHistory = [];
-            Object.keys(parallelAxisFilters).forEach((dimension) => {
-                delete parallelAxisFilters[dimension];
-                if (brushesByDim[dimension]) {
-                    brushesByDim[dimension].group.call(brushesByDim[dimension].brush.move, null);
-                }
-            });
-            isRestoringBrush = false;
-
-            if (hasGroupFilters) {
-                parallelGroupSelection = new Set(PARALLEL_GROUPS);
-                legend.selectAll("input").property("checked", true);
-            }
-
-            applyLineStyles();
-            await syncFilteredDatasetFromParallel(data, dimensions);
-        });
+        .on("click", () => resetAllFilters());
 
     controls
         .append("button")
@@ -445,24 +615,7 @@ async function renderParallelCoordinatesPlot(rows) {
         .attr("id", "parallel-undo-filters")
         .text("Undo")
         .property("disabled", true)
-        .on("click", async () => {
-            while (parallelBrushHistory.length > 0) {
-                const lastDimension = parallelBrushHistory.pop();
-                if (parallelAxisFilters[lastDimension]) {
-                    delete parallelAxisFilters[lastDimension];
-                    
-                    isRestoringBrush = true;
-                    if (brushesByDim[lastDimension]) {
-                        brushesByDim[lastDimension].group.call(brushesByDim[lastDimension].brush.move, null);
-                    }
-                    isRestoringBrush = false;
-
-                    applyLineStyles();
-                    await syncFilteredDatasetFromParallel(data, dimensions);
-                    return;
-                }
-            }
-        });
+        .on("click", () => undoLastFilter());
 
     controls.append("div").attr("class", "parallel-filter-status");
 
@@ -568,12 +721,33 @@ async function renderParallelCoordinatesPlot(rows) {
     applyLineStyles = () => {
         lineSelection
             .attr("stroke", (row) => {
-                if (!rowPassesParallelFilters(row, dimensions) || !rowPassesParallelGroupFilter(row)) return "#d1d5db";
+                const passesAxis = rowPassesParallelFilters(row, dimensions, scatterLassoSelectedIds.size > 0 ? scatterSelectionDimensions : null);
+                const passesGroup = rowPassesParallelGroupFilter(row);
+                const passesScatter = rowPassesScatterSelection(row);
+                if (!passesAxis || !passesGroup || !passesScatter) {
+                    return "#d1d5db";
+                }
                 const group = String(row.__rawRows?.[0]?.user_group || "").toLowerCase();
                 return GROUP_COLORS[group] || "#2563eb";
             })
-            .attr("stroke-width", (row) => (rowPassesParallelFilters(row, dimensions) && rowPassesParallelGroupFilter(row) ? 1.3 : 1))
-            .attr("opacity", (row) => (rowPassesParallelFilters(row, dimensions) && rowPassesParallelGroupFilter(row) ? 0.55 : 0.08));
+            .attr(
+                "stroke-width",
+                (row) => {
+                    const passesAxis = rowPassesParallelFilters(row, dimensions, scatterLassoSelectedIds.size > 0 ? scatterSelectionDimensions : null);
+                    const passesGroup = rowPassesParallelGroupFilter(row);
+                    const passesScatter = rowPassesScatterSelection(row);
+                    return passesAxis && passesGroup && passesScatter ? 1.3 : 1;
+                }
+            )
+            .attr(
+                "opacity",
+                (row) => {
+                    const passesAxis = rowPassesParallelFilters(row, dimensions, scatterLassoSelectedIds.size > 0 ? scatterSelectionDimensions : null);
+                    const passesGroup = rowPassesParallelGroupFilter(row);
+                    const passesScatter = rowPassesScatterSelection(row);
+                    return passesAxis && passesGroup && passesScatter ? 0.55 : 0.08;
+                }
+            );
     };
 
     const axis = chart
@@ -615,7 +789,12 @@ async function renderParallelCoordinatesPlot(rows) {
             .brushY()
             .extent([[-10, 0], [10, plotHeight]])
             .on("brush end", async (event) => {
-                if (isRestoringBrush) return;
+                if (isRestoringBrushRef.value) return;
+                if (scatterSelectionDimensions.size > 0) {
+                    scatterSelectionDimensions.clear();
+                    scatterLassoSelectedIds.clear();
+                    scatterLassoLocked = false;
+                }
 
                 if (!event.selection) {
                     delete parallelAxisFilters[dimension];
@@ -640,13 +819,23 @@ async function renderParallelCoordinatesPlot(rows) {
 
         const range = parallelAxisFilters[dimension];
         if (range) {
-            isRestoringBrush = true;
+            isRestoringBrushRef.value = true;
             brushGroup.call(brush.move, [yByDimension[dimension](range[1]), yByDimension[dimension](range[0])]);
-            isRestoringBrush = false;
+            isRestoringBrushRef.value = false;
         }
     });
 
     applyLineStyles();
+    parallelRenderState = {
+        data,
+        dimensions,
+        dimensionDefs,
+        yByDimension,
+        brushesByDim,
+        isRestoringBrushRef,
+        legendInputs,
+        applyLineStyles
+    };
     await syncFilteredDatasetFromParallel(data, dimensions);
 }
 
@@ -897,7 +1086,7 @@ function updateLinePlotWithStdChart(dimensions, chart, data, x, y, yAxisGroup, t
             .attr("class", "pointmarkers")
             .attr("cx", (d) => x(d.week))
             .attr("cy", (d) => y(d[dimension]))
-            .attr("r", 3)
+            .attr("r", 2.5)
             .style("cursor", "pointer")
             .style("pointer-events", "all")
             .on("mouseover", (event, d) => {
@@ -947,7 +1136,13 @@ async function renderScatterPlotMatrix(rows = []) {
     });
 
     const controlsDiv = container.append("div").attr("class", "scatter-controls");
-    controlsDiv.append("div").attr("class", "scatter-controls-label").text("Metrics");
+    const controlsHeader = controlsDiv.append("div").attr("class", "scatter-controls-header");
+    const controlsActions = controlsHeader.append("div").attr("class", "parallel-filter-controls");
+    controlsActions
+        .append("button")
+        .attr("type", "button")
+        .text("Reset selection")
+        .on("click", () => resetAllFilters());
 
     const availableMetrics = SCATTER_METRICS.filter((metric) =>
         parsedRows.some((row) => Number.isFinite(row[metric.key]))
@@ -1010,13 +1205,13 @@ async function renderScatterPlotMatrix(rows = []) {
             .on("mouseout", () => hideMetricInfoTooltip());
     });
 
-    // Lasso instruction hint (only shown when expanded)
+    // Selection instruction hint
     controlsDiv.append("div")
         .attr("class", "scatter-lasso-hint")
         .html(
-            '<strong>Lasso tool</strong><br>' +
-            'Expand the plot, then click and drag a rectangle on any scatter cell to highlight points. ' +
-            'Click "Clear selection" to reset.'
+            '<strong>Selection tool:</strong><br>' +
+            'Click and drag a rectangle on any scatter cell to highlight points. ' +
+            'Click "Reset selection" to reset.'
         );
 
     redraw();
@@ -1190,18 +1385,15 @@ function applyScatterLassoStyles(svgEl) {
         .selectAll("circle.sc-dot")
         .attr("fill", (row) => {
             if (!hasSelection) return GROUP_COLORS[String(row.user_group || "").toLowerCase()] || "#9ca3af";
-            return scatterLassoSelectedIds.has(scatterRowKey(row)) ? "#b026ff" : "#d1d5db";
+            // return scatterLassoSelectedIds.has(scatterRowKey(row)) ? "#b026ff" : "#d1d5db";
+            // Let's keep the colors of the scattered points as they were instead of purple
+            return scatterLassoSelectedIds.has(scatterRowKey(row)) ? GROUP_COLORS[String(row.user_group || "").toLowerCase()] : "#d1d5db";
         })
         .attr("fill-opacity", (row) => {
             if (!hasSelection) return 0.5;
             // Adjust the 0.35 value below to control how visible unselected dots are (0 = invisible, 1 = full).
-            return scatterLassoSelectedIds.has(scatterRowKey(row)) ? 0.9 : 0.35;
+            return scatterLassoSelectedIds.has(scatterRowKey(row)) ? 0.5 : 0.35;
         })
-        .attr("r", (row) => {
-            if (!hasSelection) return 3;
-            // Adjust selected (3.5) and unselected (1.8) radius here.
-            return scatterLassoSelectedIds.has(scatterRowKey(row)) ? 3.5 : 1.8;
-        });
 }
 
 // D3 renderer for scatter matrix SVG.
@@ -1213,9 +1405,6 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
     const n = metrics.length;
     if (n < 2) return;
 
-    // Detect whether we are inside the expanded modal.
-    const isExpanded = !!wrapEl.closest(".modal-plot-live");
-
     const totalWidth = Math.max(1, wrapEl.clientWidth);
     const totalHeight = Math.max(1, wrapEl.clientHeight);
     const gap = 3;
@@ -1225,12 +1414,18 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
     const innerW = cellW - ip.left - ip.right;
     const innerH = cellH - ip.top - ip.bottom;
 
-    // Clear lasso state when redrawing (e.g. checkbox change)
-    scatterLassoSelectedIds.clear();
-    scatterLassoLocked = false;
-    // Remove clear-lasso button if it exists
-    const existingClearBtn = wrapEl.parentElement?.querySelector(".scatter-lasso-clear-btn");
-    if (existingClearBtn) existingClearBtn.remove();
+    const availableKeys = new Set(data.map((row) => scatterRowKey(row)));
+    if (scatterLassoSelectedIds.size > 0) {
+        scatterLassoSelectedIds = new Set(
+            Array.from(scatterLassoSelectedIds).filter((key) => availableKeys.has(key))
+        );
+        if (scatterLassoSelectedIds.size === 0) {
+            scatterLassoLocked = false;
+            clearScatterSelectionFilters();
+        }
+    } else {
+        scatterLassoLocked = false;
+    }
 
     const svg = d3
         .select(wrapEl)
@@ -1247,7 +1442,7 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
     const cellCorrelationMeta = [];
 
     const setCorrelationText = (meta, corr) => {
-        const fillColor = Math.abs(corr) > 0.5 ? "#c0392b" : "#1f2937";
+        const fillColor = "#1f2937";
         const label = Number.isFinite(corr) ? `r=${corr.toFixed(2)}` : "r=n/a";
         meta.rText
             .style("fill", fillColor)
@@ -1321,68 +1516,76 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                     valid.map((row) => row[colMetric.key]),
                     valid.map((row) => row[rowMetric.key])
                 );
-
-                // Add lasso brush in expanded mode only — BEFORE circles so circles sit on top
-                // and receive hover events while the brush captures drag in the gaps.
+                // Add selection brush BEFORE circles so they sit on top and remain hoverable.
                 // D3 function: d3.brush() — creates a 2D rectangular brush (x + y).
-                if (isExpanded) {
-                    const brush = d3.brush()
-                        .extent([[0, 0], [innerW, innerH]])
-                        .on("start", function (event) {
-                            if (!event.sourceEvent) return; // programmatic call, skip
-                            if (scatterLassoLocked) {
-                                // A lasso is already active - cancel this new brush
-                                d3.select(this).call(brush.move, null);
-                                return;
-                            }
-                            // Clear brushes on all other cells
-                            cellBrushes.forEach(({ brushRef, groupRef, ri, ci }) => {
-                                if (ri !== rowIndex || ci !== colIndex) {
-                                    groupRef.call(brushRef.move, null);
-                                }
-                            });
-                        })
-                        .on("end", function (event) {
-                            if (!event.sourceEvent) return;
-                            if (scatterLassoLocked) return;
-                            if (!event.selection) {
-                                // Brush cleared (click on empty)
-                                scatterLassoSelectedIds.clear();
-                                scatterLassoLocked = false;
-                                applyScatterLassoStyles(svg.node());
-                                // Remove clear button
-                                const clearBtn = wrapEl.parentElement?.querySelector(".scatter-lasso-clear-btn");
-                                if (clearBtn) clearBtn.remove();
-                                return;
-                            }
-                            const [[x0, y0], [x1, y1]] = event.selection;
-                            // Find all points inside the rectangle
-                            scatterLassoSelectedIds.clear();
-                            valid.forEach((row) => {
-                                const cx = xScale(row[colMetric.key]);
-                                const cy = yScale(row[rowMetric.key]);
-                                if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) {
-                                    scatterLassoSelectedIds.add(scatterRowKey(row));
-                                }
-                            });
-
-                            if (scatterLassoSelectedIds.size > 0) {
-                                scatterLassoLocked = true;
-                                applyScatterLassoStyles(svg.node());
-                                updateAllCellCorrelations();
-                                // Show clear button
-                                showLassoClearButton(wrapEl, svg.node(), cellBrushes, updateAllCellCorrelations);
-                            } else {
-                                // Empty selection
-                                d3.select(this).call(brush.move, null);
-                                applyScatterLassoStyles(svg.node());
-                                updateAllCellCorrelations();
+                const brush = d3.brush()
+                    .extent([[0, 0], [innerW, innerH]])
+                    .on("start", function (event) {
+                        if (!event.sourceEvent) return; // programmatic call, skip
+                        if (scatterLassoLocked) {
+                            // A selection is already active - cancel this new brush
+                            d3.select(this).call(brush.move, null);
+                            return;
+                        }
+                        // Clear brushes on all other cells
+                        cellBrushes.forEach(({ brushRef, groupRef, ri, ci }) => {
+                            if (ri !== rowIndex || ci !== colIndex) {
+                                groupRef.call(brushRef.move, null);
                             }
                         });
+                    })
+                    .on("end", function (event) {
+                        if (!event.sourceEvent) return;
+                        if (scatterLassoLocked) return;
+                        if (!event.selection) {
+                            // Brush cleared (click on empty)
+                            scatterLassoSelectedIds.clear();
+                            scatterLassoLocked = false;
+                            applyScatterLassoStyles(svg.node());
+                            updateAllCellCorrelations();
+                            clearScatterSelectionFilters();
+                            if (parallelRenderState?.applyLineStyles) {
+                                parallelRenderState.applyLineStyles();
+                            }
+                            if (parallelRenderState?.data && parallelRenderState?.dimensions) {
+                                syncFilteredDatasetFromParallel(parallelRenderState.data, parallelRenderState.dimensions, { skipScatterRedraw: true });
+                            }
+                            return;
+                        }
+                        const [[x0, y0], [x1, y1]] = event.selection;
+                        // Find all points inside the rectangle
+                        scatterLassoSelectedIds.clear();
+                        valid.forEach((row) => {
+                            const cx = xScale(row[colMetric.key]);
+                            const cy = yScale(row[rowMetric.key]);
+                            if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) {
+                                scatterLassoSelectedIds.add(scatterRowKey(row));
+                            }
+                        });
+                        const selectedRows = valid.filter((row) => scatterLassoSelectedIds.has(scatterRowKey(row)));
 
-                    const brushGroup = plotGroup.append("g").attr("class", "sc-lasso-brush").call(brush);
-                    cellBrushes.push({ brushRef: brush, groupRef: brushGroup, ri: rowIndex, ci: colIndex });
-                }
+                        if (scatterLassoSelectedIds.size > 0) {
+                            scatterLassoLocked = true;
+                            applyScatterLassoStyles(svg.node());
+                            updateAllCellCorrelations();
+                            applyScatterSelectionToParallel(colMetric.key, rowMetric.key, selectedRows);
+                        } else {
+                            // Empty selection
+                            d3.select(this).call(brush.move, null);
+                            applyScatterLassoStyles(svg.node());
+                            updateAllCellCorrelations();
+                            clearScatterSelectionFilters();
+                        }
+                        if (parallelRenderState?.applyLineStyles) {
+                            parallelRenderState.applyLineStyles();
+                        }
+                        if (parallelRenderState?.data && parallelRenderState?.dimensions) {
+                            syncFilteredDatasetFromParallel(parallelRenderState.data, parallelRenderState.dimensions, { skipScatterRedraw: true });
+                        }
+                    });
+
+                const brushGroup = plotGroup.append("g").attr("class", "sc-lasso-brush").call(brush);
+                cellBrushes.push({ brushRef: brush, groupRef: brushGroup, ri: rowIndex, ci: colIndex });
 
                 // Draw circles AFTER brush so they render on top → hover tooltips work
                 plotGroup
@@ -1393,7 +1596,7 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                     .attr("class", "sc-dot")
                     .attr("cx", (row) => xScale(row[colMetric.key]))
                     .attr("cy", (row) => yScale(row[rowMetric.key]))
-                    .attr("r", 3)
+                    .attr("r", 2.5)
                     .attr("fill", (row) => GROUP_COLORS[String(row.user_group || "").toLowerCase()] || "#9ca3af")
                     .attr("fill-opacity", 0.5)
                     .attr("stroke", "none")
@@ -1402,7 +1605,7 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                         tooltip
                             .style("display", "block")
                             .html(
-                                `User ${row.user_id} | Wk ${row.week} | ${row.activity}<br>` +
+                                `User ${row.user_id} | Wk ${row.week}<br>` +
                                 `${colMetric.name}: ${Number.isFinite(row[colMetric.key]) ? row[colMetric.key].toFixed(2) : "N/A"}<br>` +
                                 `${rowMetric.name}: ${Number.isFinite(row[rowMetric.key]) ? row[rowMetric.key].toFixed(2) : "N/A"}<br>` +
                                 `Group: <em>${row.user_group || "N/A"}</em>`
@@ -1460,33 +1663,8 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
     });
 
     updateAllCellCorrelations();
-}
-
-// Shows a "Clear selection" button above the scatter matrix when lasso is active.
-function showLassoClearButton(wrapEl, svgEl, cellBrushes, onClear) {
-    const parent = wrapEl.parentElement;
-    if (!parent) return;
-    // Remove existing button
-    const existing = parent.querySelector(".scatter-lasso-clear-btn");
-    if (existing) existing.remove();
-
-    const btn = document.createElement("button");
-    btn.className = "scatter-lasso-clear-btn";
-    btn.type = "button";
-    btn.textContent = "Clear selection (" + scatterLassoSelectedIds.size + " points)";
-    btn.addEventListener("click", () => {
-        scatterLassoSelectedIds.clear();
-        scatterLassoLocked = false;
-        // Clear all brushes visually
-        cellBrushes.forEach(({ brushRef, groupRef }) => {
-            groupRef.call(brushRef.move, null);
-        });
-        applyScatterLassoStyles(svgEl);
-        if (typeof onClear === "function") onClear();
-        btn.remove();
-    });
-    // Insert before the svg wrapper
-    parent.insertBefore(btn, wrapEl);
+    applyScatterLassoStyles(svg.node());
+    scatterLassoLocked = scatterLassoSelectedIds.size > 0;
 }
 
 // Pearson correlation coefficient. Returns 0 if not enough points or no variance.
@@ -1566,7 +1744,7 @@ window.addEventListener("openResearcherModal", (event) => {
     modalState.placeholder = placeholder;
     modalState.type = type;
 
-    // Re-render scatter inside the modal so the lasso brushes are created.
+    // Re-render scatter inside the modal so the selection brushes are created.
     if (type === "scatter") {
         const dataToUse = filteredData.length ? filteredData : cachedDashboardRows;
         renderScatterPlotMatrix(dataToUse);
@@ -1589,10 +1767,8 @@ function closeResearcherModal() {
     modal.style.display = "none";
     container.innerHTML = "";
 
-    // Re-render scatter back in normal size (removes lasso brushes).
+    // Re-render scatter back in normal size.
     if (wasScatter) {
-        scatterLassoSelectedIds.clear();
-        scatterLassoLocked = false;
         const dataToUse = filteredData.length ? filteredData : cachedDashboardRows;
         renderScatterPlotMatrix(dataToUse);
     }
@@ -1611,3 +1787,6 @@ async function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
+
+
+
