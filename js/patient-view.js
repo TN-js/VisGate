@@ -770,7 +770,7 @@ function ensureMetricsViewToggle() {
             wrapper.style.marginLeft = '12px';
 
             const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'metrics-bar-toggle-' + titleId; cb.checked = showMetricBarView;
-            const lbl = document.createElement('label'); lbl.htmlFor = cb.id; lbl.textContent = 'Bar view'; lbl.style.fontSize = '13px'; lbl.style.color = '#475569';
+            const lbl = document.createElement('label'); lbl.htmlFor = cb.id; lbl.textContent = 'Compare with Mean'; lbl.style.fontSize = '13px'; lbl.style.color = '#475569';
             cb.addEventListener('change', (e) => { showMetricBarView = !!e.target.checked; try { renderRadarCharts(); } catch (err) {} });
 
             wrapper.appendChild(cb); wrapper.appendChild(lbl);
@@ -801,6 +801,15 @@ function drawMetricsBarChart(containerId, metricValues, meanMetricValues, size, 
 
     // container: center contents
     const outer = container.append('div').style('display','flex').style('flex-direction','column').style('align-items','center').style('justify-content','center').style('gap','14px').style('padding','8px').style('width','100%');
+
+    // brief caption explaining percent values (right-aligned, styled like percent badges but grey)
+    outer.append('div').style('width','100%').append('div')
+        .text('% change from mean')
+        .style('font-weight','700')
+        .style('font-size','13px')
+        .style('color','#64748b')
+        .style('margin-bottom','4px')
+        .style('text-align','right');
 
     rows.forEach(r => {
         const block = outer.append('div').style('display','flex').style('flex-direction','column').style('align-items','center').style('width','100%');
