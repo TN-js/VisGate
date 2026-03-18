@@ -250,67 +250,15 @@ function clearScatterSelectionFilters() {
     scatterSelectionDimensions.clear();
 }
 
-function applyScatterSelectionToParallel(metricX, metricY, selectedRows) {
-    if (!parallelRenderState) return;
-    const { dimensionDefs, yByDimension, brushesByDim, isRestoringBrushRef } = parallelRenderState;
-    if (!dimensionDefs || !yByDimension || !brushesByDim) return;
-
+function resetScatterSelection() {
+    const hadSelection = scatterLassoSelectedIds.size > 0 || scatterSelectionDimensions.size > 0;
+    scatterLassoSelectedIds.clear();
+    scatterLassoLocked = false;
     clearScatterSelectionFilters();
-
-    if (!selectedRows || selectedRows.length === 0) return;
-
-    const dimensionsToSet = [];
-    const activityRanges = new Map();
-    [metricX, metricY].forEach((metricKey) => {
-        const valuesByActivity = new Map();
-        selectedRows.forEach((row) => {
-            const activity = String(row.activity || "").trim().toUpperCase();
-            const value = Number(row[metricKey]);
-            if (!activity || !Number.isFinite(value)) return;
-            if (!valuesByActivity.has(activity)) valuesByActivity.set(activity, []);
-            valuesByActivity.get(activity).push(value);
-        });
-
-        valuesByActivity.forEach((values, activity) => {
-            if (!values.length) return;
-            const min = Math.min(...values);
-            const max = Math.max(...values);
-            if (!Number.isFinite(min) || !Number.isFinite(max)) return;
-            if (!activityRanges.has(activity)) activityRanges.set(activity, new Map());
-            activityRanges.get(activity).set(metricKey, [min, max]);
-        });
-    });
-
-    if (!activityRanges.size) return;
-
-    dimensionDefs.forEach((def) => {
-        const activityKey = String(def.activity || "").trim().toUpperCase();
-        const rangesForActivity = activityRanges.get(activityKey);
-        if (!rangesForActivity) return;
-        const range = rangesForActivity.get(def.key);
-        if (!range) return;
-        parallelAxisFilters[def.name] = range;
-        dimensionsToSet.push(def.name);
-    });
-
-    if (!dimensionsToSet.length) return;
-
-    dimensionsToSet.forEach((dimension) => {
-        parallelBrushHistory = parallelBrushHistory.filter((d) => d !== dimension);
-        parallelBrushHistory.push(dimension);
-        scatterSelectionDimensions.add(dimension);
-        const brushEntry = brushesByDim[dimension];
-        const yScale = yByDimension[dimension];
-        const range = parallelAxisFilters[dimension];
-        if (brushEntry && yScale && range) {
-            isRestoringBrushRef.value = true;
-            brushEntry.group.call(brushEntry.brush.move, [yScale(range[1]), yScale(range[0])]);
-            isRestoringBrushRef.value = false;
-        }
-    });
+    if (hadSelection) {
+        renderScatterPlotMatrix(filteredData.length ? filteredData : cachedDashboardRows);
+    }
 }
-
- 
 
 function requestParallelSync(options = {}) {
     if (!parallelRenderState) return Promise.resolve();
@@ -472,21 +420,13 @@ async function syncFilteredDatasetFromParallel(parallelRows, dimensions, options
     const axisFilterCount = Object.values(parallelAxisFilters).filter((range) => Array.isArray(range) && range.length === 2).length;
     const hasGroupFilter = parallelGroupSelection.size > 0 && parallelGroupSelection.size < PARALLEL_GROUPS.length;
     const hasScatterFilter = scatterLassoSelectedIds.size > 0;
-    const nonScatterAxisCount = hasScatterFilter
-        ? Object.keys(parallelAxisFilters).filter(
-            (dimension) =>
-                Array.isArray(parallelAxisFilters[dimension]) &&
-                parallelAxisFilters[dimension].length === 2 &&
-                !scatterSelectionDimensions.has(dimension)
-        ).length
-        : axisFilterCount;
-    const activeFilterCount = nonScatterAxisCount + (hasGroupFilter ? 1 : 0) + (hasScatterFilter ? 1 : 0);
+    const activeFilterCount = axisFilterCount + (hasGroupFilter ? 1 : 0) + (hasScatterFilter ? 1 : 0);
     const sourceRows = Array.isArray(parallelRows) ? parallelRows : [];
-    const hasAxisOrGroupFilter = nonScatterAxisCount > 0 || hasGroupFilter;
+    const hasAxisOrGroupFilter = axisFilterCount > 0 || hasGroupFilter;
     const baseParallelRows = (hasAxisOrGroupFilter || hasScatterFilter)
         ? sourceRows.filter(
             (row) =>
-                rowPassesParallelFilters(row, dimensions, hasScatterFilter ? scatterSelectionDimensions : null) &&
+                rowPassesParallelFilters(row, dimensions) &&
                 rowPassesParallelGroupFilter(row) &&
                 rowPassesScatterSelection(row)
         )
@@ -498,17 +438,13 @@ async function syncFilteredDatasetFromParallel(parallelRows, dimensions, options
     let baseRawRows = [];
     if (!hasAxisOrGroupFilter && !hasScatterFilter) {
         baseRawRows = cachedDashboardRows.slice();
-    } else if (hasScatterFilter) {
+    } else {
         const allowedSessions = new Set(baseParallelRows.map((row) => row.__sessionKey));
-        baseRawRows = cachedDashboardRows.filter((row) =>
-            scatterLassoSelectedIds.has(scatterRowKey(row)) &&
-            allowedSessions.has(`${row.user_id}::${row.week}`)
-        );
-    } else if (baseParallelRows.length && Array.isArray(baseParallelRows[0].__rawRows)) {
-        // PCP lines represent patient-week sessions; flatten back to original row granularity.
-        baseRawRows = baseParallelRows.flatMap((row) => row.__rawRows);
-    } else if (baseParallelRows.length && baseParallelRows[0].__raw) {
-        baseRawRows = baseParallelRows.map((row) => row.__raw);
+        baseRawRows = cachedDashboardRows.filter((row) => {
+            const sessionKey = `${row.user_id}::${row.week}`;
+            if (!allowedSessions.has(sessionKey)) return false;
+            return rowPassesParallelGroupFilter({ __rawRows: [row] });
+        });
     }
 
     if (!activeFilterCount) {
@@ -721,7 +657,7 @@ async function renderParallelCoordinatesPlot(rows) {
     applyLineStyles = () => {
         lineSelection
             .attr("stroke", (row) => {
-                const passesAxis = rowPassesParallelFilters(row, dimensions, scatterLassoSelectedIds.size > 0 ? scatterSelectionDimensions : null);
+                const passesAxis = rowPassesParallelFilters(row, dimensions);
                 const passesGroup = rowPassesParallelGroupFilter(row);
                 const passesScatter = rowPassesScatterSelection(row);
                 if (!passesAxis || !passesGroup || !passesScatter) {
@@ -733,7 +669,7 @@ async function renderParallelCoordinatesPlot(rows) {
             .attr(
                 "stroke-width",
                 (row) => {
-                    const passesAxis = rowPassesParallelFilters(row, dimensions, scatterLassoSelectedIds.size > 0 ? scatterSelectionDimensions : null);
+                    const passesAxis = rowPassesParallelFilters(row, dimensions);
                     const passesGroup = rowPassesParallelGroupFilter(row);
                     const passesScatter = rowPassesScatterSelection(row);
                     return passesAxis && passesGroup && passesScatter ? 1.3 : 1;
@@ -742,7 +678,7 @@ async function renderParallelCoordinatesPlot(rows) {
             .attr(
                 "opacity",
                 (row) => {
-                    const passesAxis = rowPassesParallelFilters(row, dimensions, scatterLassoSelectedIds.size > 0 ? scatterSelectionDimensions : null);
+                    const passesAxis = rowPassesParallelFilters(row, dimensions);
                     const passesGroup = rowPassesParallelGroupFilter(row);
                     const passesScatter = rowPassesScatterSelection(row);
                     return passesAxis && passesGroup && passesScatter ? 0.55 : 0.08;
@@ -1142,7 +1078,7 @@ async function renderScatterPlotMatrix(rows = []) {
         .append("button")
         .attr("type", "button")
         .text("Reset selection")
-        .on("click", () => resetAllFilters());
+        .on("click", () => resetScatterSelection());
 
     const availableMetrics = SCATTER_METRICS.filter((metric) =>
         parsedRows.some((row) => Number.isFinite(row[metric.key]))
@@ -1544,12 +1480,6 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                             applyScatterLassoStyles(svg.node());
                             updateAllCellCorrelations();
                             clearScatterSelectionFilters();
-                            if (parallelRenderState?.applyLineStyles) {
-                                parallelRenderState.applyLineStyles();
-                            }
-                            if (parallelRenderState?.data && parallelRenderState?.dimensions) {
-                                syncFilteredDatasetFromParallel(parallelRenderState.data, parallelRenderState.dimensions, { skipScatterRedraw: true });
-                            }
                             return;
                         }
                         const [[x0, y0], [x1, y1]] = event.selection;
@@ -1562,25 +1492,16 @@ function drawScatterMatrixSvg(data, metrics, wrapEl) {
                                 scatterLassoSelectedIds.add(scatterRowKey(row));
                             }
                         });
-                        const selectedRows = valid.filter((row) => scatterLassoSelectedIds.has(scatterRowKey(row)));
-
                         if (scatterLassoSelectedIds.size > 0) {
                             scatterLassoLocked = true;
                             applyScatterLassoStyles(svg.node());
                             updateAllCellCorrelations();
-                            applyScatterSelectionToParallel(colMetric.key, rowMetric.key, selectedRows);
                         } else {
                             // Empty selection
                             d3.select(this).call(brush.move, null);
                             applyScatterLassoStyles(svg.node());
                             updateAllCellCorrelations();
                             clearScatterSelectionFilters();
-                        }
-                        if (parallelRenderState?.applyLineStyles) {
-                            parallelRenderState.applyLineStyles();
-                        }
-                        if (parallelRenderState?.data && parallelRenderState?.dimensions) {
-                            syncFilteredDatasetFromParallel(parallelRenderState.data, parallelRenderState.dimensions, { skipScatterRedraw: true });
                         }
                     });
 
@@ -1787,6 +1708,3 @@ async function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
-
-
-
