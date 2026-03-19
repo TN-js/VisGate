@@ -9,59 +9,112 @@
 <body>
     <div id="header-placeholder"></div>
 
-<main class="visgait-about-body" style="max-width: 1200px; margin: 0 auto; padding: 2rem 1rem; color: #334155; font-family: sans-serif;">
+<main class="visgait-about-body">
   
   <!-- 1. Project Overview -->
-  <section id="project-overview" style="margin-bottom: 3rem;">
-    <h2 style="font-size: 1.8rem; font-weight: 700; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-bottom: 1rem;">1. Project Overview</h2>
-    <p style="margin-bottom: 1rem; line-height: 1.6;">
-      <strong>VisGait</strong> is an interactive D3.js-based data visualization dashboard developed for the DH2321 course at KTH. 
+  <section id="project-overview" class="about-section">
+    <h2 class="about-section-title">1. Project Overview</h2>
+    <p class="about-intro-text">
+      <strong>VisGait</strong> is an interactive D3.js dashboard for rehabilitation tracking and cohort analysis in the DH2321 project at KTH.
+      The dashboard design is informed by recent smart knee-brace research
+      (<a href="https://doi.org/10.1002/adhm.202202987" target="_blank" rel="noopener noreferrer" class="about-link" aria-label="Smart knee brace paper DOI reference">DOI: 10.1002/adhm.202202987</a>),
+      and the implementation is split into two targeted user experiences.
     </p>
-    <p style="line-height: 1.6;">
-      By translating complex raw sensor data from knee braces into high-level, readable visual indicators, VisGait bridges the gap between raw biomedical data and actionable health insights. The dashboard is split into two distinct views: one empowering <strong>patients</strong> to intuitively track their recovery and customize their activity goals, and another enabling <strong>researchers</strong> to analyze cohorts, find statistical correlations, and explore distributions of gait anomalies.
-    </p>
+
+    <div class="about-grid-2col">
+      <article class="about-card about-card-patient">
+        <h3 class="about-card-title">Patient View</h3>
+        <p>
+          The patient dashboard focuses on clear progress tracking over time. Patients can monitor weekly recovery,
+          compare activity performance, and adjust goal-related controls without needing to interpret raw signals.
+        </p>
+      </article>
+
+      <article class="about-card about-card-researcher">
+        <h3 class="about-card-title">Researcher View</h3>
+        <p>
+          The researcher dashboard supports multivariate analysis across cohorts. Researchers can inspect distributions,
+          correlations, and temporal trends to investigate gait anomalies and performance differences by category.
+        </p>
+      </article>
+    </div>
   </section>
 
   <!-- 2. How To Use -->
-  <section id="how-to-use" style="margin-bottom: 3rem;">
-    <h2 style="font-size: 1.8rem; font-weight: 700; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-bottom: 1rem;">2. How To Use (Munzner's Framework)</h2>
-    
-    <div style="margin-bottom: 2rem;">
-      <h3 style="font-size: 1.4rem; font-weight: 600; color: #1e293b; margin-bottom: 0.5rem;">User I: Patients</h3>
-      <p style="margin-bottom: 1rem; line-height: 1.6;">The Patient Dashboard prioritizes clarity, motivation, and personalization.</p>
-      <ul style="list-style-type: disc; margin-left: 1.5rem; line-height: 1.6; display: flex; flex-direction: column; gap: 0.75rem;">
-        <li><strong>Task 1 (Monitoring General Recovery):</strong> 
-          <br><span style="color:#64748b;">Analayze:</span> Discover | <span style="color:#64748b;">Search:</span> Explore | <span style="color:#64748b;">Query:</span> Identify | <span style="color:#64748b;">Target:</span> Trends.
-          <br><strong>Idiom:</strong> <em>Weekly Progress Line Chart & Health Bar.</em> Patients evaluate a single aggregate "Composite Score" over 12 weeks to see if they are improving and staying in the "Healthy Zone".
-        </li> 
-        <li><strong>Task 2 (Identifying Suitable Activities):</strong> 
-          <br><span style="color:#64748b;">Analayze:</span> Discover | <span style="color:#64748b;">Search:</span> Explore | <span style="color:#64748b;">Query:</span> Compare | <span style="color:#64748b;">Target:</span> Extremes.
-          <br><strong>Idiom:</strong> <em>Activities Overview (Radar Chart) & Weekly Bar Charts.</em> Allows patients to quickly compare their performance across 4 specific activities (Stair Climbing, Sit-To-Stand, Timed Up-and-Go, Walking).
-        </li>
-      </ul>
+  <section id="how-to-use" class="about-section">
+    <h2 class="about-section-title">2. How To Use (Munzner's Framework)</h2>
+    <p class="about-intro-text">
+      Task abstraction and idiom choices follow Munzner's framework.
+      <a href="#ref-munzner" class="about-link" aria-label="Jump to Munzner reference">See citation in References</a>.
+    </p>
+
+    <div class="about-grid-2col">
+      <article class="about-card">
+        <h3 class="about-card-title">User I: Patients</h3>
+        <p class="about-card-subtitle">The patient dashboard prioritizes clarity, motivation, and personalization.</p>
+        <ul class="about-list">
+          <li>
+            <strong>Task 1 (Monitoring General Recovery)</strong><br>
+            <span class="about-meta-label">Analyze:</span> Discover |
+            <span class="about-meta-label">Search:</span> Explore |
+            <span class="about-meta-label">Query:</span> Identify |
+            <span class="about-meta-label">Target:</span> Trends<br>
+            <strong>Idiom:</strong> <em>Weekly Progress Line Chart and Health Bar.</em>
+          </li>
+          <li>
+            <strong>Task 2 (Identifying Suitable Activities)</strong><br>
+            <span class="about-meta-label">Analyze:</span> Discover |
+            <span class="about-meta-label">Search:</span> Explore |
+            <span class="about-meta-label">Query:</span> Compare |
+            <span class="about-meta-label">Target:</span> Extremes<br>
+            <strong>Idiom:</strong> <em>Activities Overview (Radar) and Weekly Bar Charts.</em>
+          </li>
+        </ul>
+      </article>
+
+      <article class="about-card">
+        <h3 class="about-card-title">User II: Researchers</h3>
+        <p class="about-card-subtitle">The researcher dashboard supports deep cohort analysis and multidimensional correlation.</p>
+        <ul class="about-list">
+          <li>
+            <strong>Task 1 (Visualizing statistical significance of gait metrics)</strong><br>
+            <span class="about-meta-label">Analyze:</span> Discover |
+            <span class="about-meta-label">Search:</span> Explore |
+            <span class="about-meta-label">Query:</span> Summarize |
+            <span class="about-meta-label">Target:</span> Distribution and Dependencies<br>
+            <strong>Idiom:</strong> <em>Violin Plot and Scatter Plot Matrix.</em>
+          </li>
+          <li>
+            <strong>Task 2 (Comparing specific attributes over time)</strong><br>
+            <span class="about-meta-label">Analyze:</span> Discover |
+            <span class="about-meta-label">Search:</span> Explore |
+            <span class="about-meta-label">Query:</span> Compare |
+            <span class="about-meta-label">Target:</span> Trends<br>
+            <strong>Idiom:</strong> <em>Line Plot with Standard Deviation.</em>
+          </li>
+        </ul>
+      </article>
     </div>
 
-    <div style="margin-bottom: 2rem;">
-      <h3 style="font-size: 1.4rem; font-weight: 600; color: #1e293b; margin-bottom: 0.5rem;">User II: Researchers</h3>
-      <p style="margin-bottom: 1rem; line-height: 1.6;">The Researcher Dashboard allows for deep cohort analysis and multidimensional correlation.</p>
-      <ul style="list-style-type: disc; margin-left: 1.5rem; line-height: 1.6; display: flex; flex-direction: column; gap: 0.75rem;">
-        <li><strong>Task 1 (Visualizing the statistical significance of gait metrics):</strong> 
-          <br><span style="color:#64748b;">Analayze:</span> Discover | <span style="color:#64748b;">Search:</span> Explore | <span style="color:#64748b;">Query:</span> Summarize | <span style="color:#64748b;">Target:</span> Distribution & Dependencies.
-          <br><strong>Idiom:</strong> <em>Violin Plot & Scatter Plot Matrix.</em> Generates Pearson's <em>r</em> correlation grids to uncover hidden biomechanical relationships between metrics.
-        </li>
-        <li><strong>Task 2 (Comparing specific attributes):</strong> 
-          <br><span style="color:#64748b;">Analayze:</span> Discover | <span style="color:#64748b;">Search:</span> Explore | <span style="color:#64748b;">Query:</span> Compare | <span style="color:#64748b;">Target:</span> Trends.
-          <br><strong>Idioms:</strong> <em>Line Plot with Standard Deviation.</em> Replaces traditional box plots to better visualize the underlying probability density of metrics across cohorts over time.
-        </li>
-      </ul>
+    <div class="about-video-block">
+      <h3 class="about-card-title">Demo Video</h3>
+      <div class="about-video-frame">
+        <iframe
+          src="https://www.youtube.com/embed/R4VXUkeM1KU"
+          title="VisGait Demo Video"
+          loading="lazy"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allowfullscreen></iframe>
+      </div>
     </div>
 
-    <div>
-      <h3 style="font-size: 1.4rem; font-weight: 600; color: #1e293b; margin-bottom: 0.5rem;">Limitations</h3>
-      <ul style="list-style-type: disc; margin-left: 1.5rem; line-height: 1.6;">
-        <li><strong>Synthetic Demonstration Data:</strong> The gait performance data currently visualized in the web prototype is partly synthetic and generated strictly for UI/UX demonstration purposes.</li>
-        <li><strong>:</strong> Peaks from the raw signals of the knee braces still need to be labelled either manually or by algorithms, and further processed to give the metrics for visualization.</li>
-        <li><strong>Web Responsiveness:</strong> Dense multivariate charts (like the Scatter Plot Matrix and Parallel Coordinates) scale poorly on smaller mobile devices.</li>
+    <div class="about-limitations">
+      <h3 class="about-card-title">Limitations</h3>
+      <ul class="about-list">
+        <li><strong>Synthetic Demonstration Data:</strong> Current longitudinal performance visuals include synthetic segments for demonstration.</li>
+        <li><strong>Signal Processing Disclosure:</strong> Full transformation details from raw signal to all derived metrics are partially withheld while research is ongoing.</li>
+        <li><strong>Web Responsiveness:</strong> Dense multivariate charts, especially scatter matrices and parallel coordinates, remain harder to read on small mobile screens.</li>
       </ul>
     </div>
   </section>
@@ -69,6 +122,12 @@
   <!-- 3. Team and Role -->
   <section id="team-roles" style="margin-bottom: 3rem;">
     <h2 style="font-size: 1.8rem; font-weight: 700; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-bottom: 1rem;">3. Team and Work Distribution</h2>
+    <div style="margin-bottom: 1.25rem; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; background: #ffffff;">
+      <img
+        src="images/DH2321 Final Presentation.png"
+        alt="DH2321 Final Presentation"
+        style="display: block; width: 100%; height: auto;">
+    </div>
     <div style="overflow-x: auto;">
       <table style="width: 100%; border-collapse: collapse; text-align: left; line-height: 1.5;">
         <thead>
@@ -110,9 +169,110 @@
   </section>
 
   <!-- 4. Data -->
-  <section id="data" style="margin-bottom: 3rem;">
-    <h2 style="font-size: 1.8rem; font-weight: 700; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-bottom: 1rem;">4. Data Provenance & Abstraction</h2>
-
+  <section id="data" class="about-section">
+    <h2 class="about-section-title">4. Data Provenance & Abstraction</h2>
+    <div class="about-card">
+      <p>
+        The source data originates from the smart knee braces and consists of raw <strong>timestamp</strong> and
+        <strong>resistance signal</strong> for both the left and right knees. These raw signals are processed into
+        derived gait metrics that are used throughout the dashboard.
+      </p>
+      <p>
+        The working dataset is stored in <code>data/dashboard_data.csv</code>. Variable descriptions for the derived metrics
+        are documented in <code>js/config.js</code> under <code>METRIC_INFO</code>.
+      </p>
+      <div class="about-metric-grid" aria-label="Metric descriptions sourced from METRIC_INFO">
+        <article class="about-metric-card">
+          <h4>IPI_left_mean_sec</h4>
+          <p>Left Inter-Peak Interval (Mean) - average time in seconds between consecutive left foot strikes. Lower values indicate faster stepping.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>IPI_left_std_sec</h4>
+          <p>Left Inter-Peak Interval (Std Dev) - variability of left foot strike timing in seconds. Higher values suggest less consistent gait.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>IPI_right_mean_sec</h4>
+          <p>Right Inter-Peak Interval (Mean) - average time in seconds between consecutive right foot strikes.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>IPI_right_std_sec</h4>
+          <p>Right Inter-Peak Interval (Std Dev) - variability of right foot strike timing in seconds.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>cadence_total_steps_min</h4>
+          <p>Total Cadence - combined steps per minute from both feet. A common clinical measure of walking speed.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>gait_index_left_pct</h4>
+          <p>Left Gait Index (%) - regularity score for the left leg's gait pattern. Higher values indicate a more consistent, periodic stride.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>gait_index_right_pct</h4>
+          <p>Right Gait Index (%) - regularity score for the right leg's gait pattern.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>GSI_pct</h4>
+          <p>Gait Symmetry Index (%) - measures overall symmetry between left and right gait. Lower values indicate more symmetric gait.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>symmetry_ratio</h4>
+          <p>Symmetry Ratio - ratio of left to right step timing. A value of 1.0 indicates perfect bilateral symmetry.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>GA_signed_pct</h4>
+          <p>Gait Asymmetry (Signed %) - directional asymmetry measure. Positive means right-leg dominant, negative means left-leg dominant.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>step_time_cv_pct</h4>
+          <p>Step Time Variability (CV %) - coefficient of variation of step timing. Lower is better.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>cycle_time_cv_pct</h4>
+          <p>Gait Cycle Variability (CV %) - coefficient of variation of gait cycle timing. Lower values indicate more rhythmic gait.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>total_peaks</h4>
+          <p>Total Peaks - total number of detected foot strikes (both feet combined) during the activity.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>total_duration_sec</h4>
+          <p>Total Duration (sec) - total time in seconds to complete the activity from start to finish.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>composite_score</h4>
+          <p>Composite Score (0-100) - weighted combination of gait metrics into a single performance score. Higher is better.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>composite_score_overall</h4>
+          <p>Overall Composite Score - composite performance score averaged across all four activities.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>perf_change_pct_overall</h4>
+          <p>Overall Performance Change (%) - percentage change in overall composite score from baseline.</p>
+        </article>
+        <article class="about-metric-card">
+          <h4>percentile_rank_absolute</h4>
+          <p>Percentile Rank (Absolute) - patient rank among all patients based on absolute performance (0-100).</p>
+        </article>
+      </div>
+      <p>
+        Because this is an ongoing research project, the full transformation methodology from raw signal to every derived
+        metric cannot be released yet.
+      </p>
+      <p>
+        One important disclosure is available: only <strong>week 1</strong> data is real. Weeks <strong>2 to 12</strong> are
+        synthetic and were generated for demonstration of longitudinal behavior. The synthetic generation process starts from
+        a random selection of four participants in each performance category
+        (<strong class="about-status about-status-improving">improving</strong>,
+        <strong class="about-status about-status-declining">declining</strong>, and
+        <strong class="about-status about-status-stable">stable</strong>, as recorded in the dataset), then applies an algorithm to generate plausible time-series
+        gait metric values.
+      </p>
+      <p>
+        Related references are listed in
+        <a href="#project-resources" class="about-link" aria-label="Jump to project resources section">Project Resources</a>.
+      </p>
+    </div>
   </section>
 
   <!-- 5. Changelog -->
@@ -140,35 +300,71 @@
       <!-- Researcher Features -->
       <div style="background-color: #eff6ff; padding: 1.5rem; border-radius: 8px; border: 1px solid #bfdbfe;">
         <h3 style="font-size: 1.2rem; font-weight: 700; color: #1e40af; margin-bottom: 1rem;">Researcher Dashboard Updates</h3>
-        <h5>2026-03-04</h5>
+        <h5>Final Presentation</h5>
         <ul style="list-style-type: disc; margin-left: 1.2rem; line-height: 1.5; color: #334155; font-size: 0.95rem; display: flex; flex-direction: column; gap: 0.5rem;">
-          <li><strong>Added:</strong> Something</li>
+          <li><strong>Added:</strong> Rectangle lasso selection for the scatter plot matrix in expanded view to mark and inspect selected points.</li>
+          <li><strong>Improved:</strong> Line chart readability with clearer labeling, checkbox interaction, and axis-range handling.</li>
+          <li><strong>Changed:</strong> PCP line coloring to reflect user performance category, and updated filter text to describe selected lines rather than raw row counts.</li>
+          <li><strong>Added:</strong> Expand button support on each researcher chart for full-screen inspection.</li>
+          <li><strong>Added:</strong> Synthetic-data disclaimer to clarify data usage and demonstration scope.</li>
+          <li><strong>Added:</strong> Hover metric-definition tooltips so users can read definitions and use cases directly in the controls.</li>
+          <li><strong>Fixed:</strong> PCP interaction and rendering issues affecting stability during filtering.</li>
+        </ul>
+        <h5>2026-03-16</h5>
+        <ul style="list-style-type: disc; margin-left: 1.2rem; line-height: 1.5; color: #334155; font-size: 0.95rem; display: flex; flex-direction: column; gap: 0.5rem;">
+          <li><strong>Investigated:</strong> PCP to SPLOM bidirectional brushing mismatch caused by metric granularity differences (for example, PCP uses activity-specific composite scores while SPLOM uses generic composite score fields).</li>
+          <li><strong>Decision:</strong> Reverted to the stable interaction model where PCP remains the primary filter for downstream views; deferred full bidirectional brush-mapping due to ambiguous semantic mapping before final deliverable.</li>
         </ul>
       </div>
     </div>
   </section>
 
   <!-- 6. Project Resources -->
-  <section id="project-resources" style="border-top: 1px solid #e2e8f0; padding-top: 2rem;">
-    <h2 style="font-size: 1.8rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">6. Project Resources</h2>
-    <ul style="list-style-type: none; padding: 0; line-height: 1.8;">
-      <li>
-        <span style="font-weight: 600; color: #0f172a;">Source Code:</span> 
-        <a href="https://github.com/TN-js/VisGait" target="_blank" style="color: #2563eb; text-decoration: none;">GitHub - TN-js/VisGait</a>
-      </li>
-      <li>
-        <span style="font-weight: 600; color: #0f172a;">Proposal Presentation:</span> 
-        <a href="https://docs.google.com/presentation/d/1yXMks2teuyLv_T2dyRLIfncBSLzHVV-ie-0U1XoPZWE/edit?slide=id.g3c2ec58f8aa_2_98#slide=id.g3c2ec58f8aa_2_98" target="_blank" style="color: #2563eb; text-decoration: none;">Google Slides Presentation Slides</a>
-      </li>
-      <li>
-        <span style="font-weight: 600; color: #0f172a;">Sketches Presentation:</span> 
-        <a href="https://www.canva.com/design/DAHBCP5IWrk/De4llAQyx43CkCpfOMmkMw/edit" target="_blank" style="color: #2563eb; text-decoration: none;">Canva Presentation Slides</a>
-      </li>
-      <li>
-        <span style="font-weight: 600; color: #0f172a;">Final Presentation:</span> 
-        <a href="https://tn-js.github.io/VisGait/index.html" target="_blank" style="color: #2563eb; text-decoration: none;">Canva Presentation Slides</a>
-      </li>
-    </ul>
+  <section id="project-resources" class="about-section about-resources-section">
+    <h2 class="about-section-title">6. Project Resources</h2>
+
+    <div class="about-grid-3col">
+      <div class="about-card">
+        <h3 class="about-card-title">References</h3>
+        <ul class="about-resource-list">
+          <li id="ref-knee-brace">
+            Knee brace research paper:
+            <a href="https://doi.org/10.1002/adhm.202202987" target="_blank" rel="noopener noreferrer" class="about-link">DOI: 10.1002/adhm.202202987</a>
+          </li>
+          <li id="ref-munzner">
+            Munzner, T. (2014). <em>Visualization Analysis and Design</em> (1st ed.). A K Peters/CRC Press.
+            <a href="https://doi.org/10.1201/b17511" target="_blank" rel="noopener noreferrer" class="about-link">DOI: 10.1201/b17511</a>
+          </li>
+        </ul>
+      </div>
+
+      <div class="about-card">
+        <h3 class="about-card-title">Source Code</h3>
+        <ul class="about-resource-list">
+          <li>
+            <a href="https://github.com/TN-js/VisGait" target="_blank" rel="noopener noreferrer" class="about-link">GitHub - TN-js/VisGait</a>
+          </li>
+        </ul>
+      </div>
+
+      <div class="about-card">
+        <h3 class="about-card-title">Presentations</h3>
+        <ul class="about-resource-list">
+          <li>
+            Proposal:
+            <a href="https://docs.google.com/presentation/d/1yXMks2teuyLv_T2dyRLIfncBSLzHVV-ie-0U1XoPZWE/edit?slide=id.g3c2ec58f8aa_2_98#slide=id.g3c2ec58f8aa_2_98" target="_blank" rel="noopener noreferrer" class="about-link">Google Slides</a>
+          </li>
+          <li>
+            Sketches:
+            <a href="https://www.canva.com/design/DAHBCP5IWrk/De4llAQyx43CkCpfOMmkMw/edit" target="_blank" rel="noopener noreferrer" class="about-link">Canva</a>
+          </li>
+          <li>
+            Final:
+            <a href="https://tn-js.github.io/VisGait/index.html" target="_blank" rel="noopener noreferrer" class="about-link">Published Site</a>
+          </li>
+        </ul>
+      </div>
+    </div>
   </section>
 
 </main>
